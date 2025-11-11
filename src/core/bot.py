@@ -101,9 +101,10 @@ class ScalperBot:
                     short_score = await self.clc_engine.evaluate_trade(symbol, "SHORT", current_price, orderbook, recent_trades)
 
                     best = None
-                    if long_score.meets_entry_criteria(self.config.scoring.min_entry_score):
+                    min_conf_signals = self.config.clc_strategy.confirmation.get('min_signals_required', 2) if isinstance(self.config.clc_strategy.confirmation, dict) else 2
+                    if long_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
                         best = ("LONG", long_score)
-                    if short_score.meets_entry_criteria(self.config.scoring.min_entry_score):
+                    if short_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
                         # choose higher score or prefer single if conflict
                         if best is None or short_score.total_score > best[1].total_score:
                             best = ("SHORT", short_score)

@@ -27,7 +27,7 @@ clc_strategy:
     key_emas: [20,50,200]
     max_distance_from_level_pct: 0.005
   confirmation:
-    min_signals_required: 2
+    min_signals_required: 1  # Lowered from 2 to 1 for backtest tuning
     imbalance_threshold: 0.7
     delta_threshold: 0.6
     absorption_min_refills: 3

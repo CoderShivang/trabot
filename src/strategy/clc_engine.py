@@ -36,11 +36,11 @@ class CLCScore:
     reasons: List[str]
     warnings: List[str]
 
-    def meets_entry_criteria(self, min_score: float) -> bool:
+    def meets_entry_criteria(self, min_score: float, min_confirmation_signals: int = 2) -> bool:
         return (
             self.total_score >= min_score and
             self.at_location and
-            len(self.confirmation_signals) >= 2
+            len(self.confirmation_signals) >= min_confirmation_signals
         )
 
 class CLCEngine:
