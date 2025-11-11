@@ -3,7 +3,8 @@ trading:
   position_size_usdt: 100.0
   max_positions: 2
   leverage: 100
-  taker_fee_bps: 20   # 0.2% example; adjust
+  taker_fee_bps: 5    # 0.05% Binance futures taker fee
+  maker_fee_bps: 2    # 0.02% Binance futures maker fee (for reference)
   paper_trading: true
   min_time_between_trades_seconds: 900  # 15 minutes cooldown (reduced overtrading)
   btc_risk_points: 140.0    # $140 stop loss for ~$20 risk with 100x leverage
