@@ -21,10 +21,27 @@ class BinanceClient:
         self.orderbooks = {sym: OrderBookDepth(symbol=sym, levels={}) for sym in config.trading.symbols}
         self.backtest_cache = None  # Cache for backtest mode
 
-    async def connect(self):
+    async def connect(self, skip_ping=False):
         # Skip connection in backtest mode - we'll use cached data only
         if self.backtest_mode:
             logger.info("[BINANCE] Backtest mode - skipping API connection (will use cached data)")
+            return
+
+        # For backtesting with skip_ping, create client with minimal configuration
+        # to avoid geo-restriction errors during SDK initialization
+        if skip_ping:
+            logger.info("[BINANCE] Backtest mode - creating data-only client (no ping)")
+            try:
+                # Try to create a mainnet client for data fetching
+                # The SDK will still try to ping, but we'll catch the error
+                self.data_client = Client(api_key=self.config.api_key, api_secret=self.config.api_secret, testnet=False)
+                logger.info("[BINANCE] Data client ready for backtest")
+            except Exception as e:
+                # If client creation fails due to geo-restriction, we can't proceed
+                logger.error(f"[BINANCE] Failed to create client for backtest: {e}")
+                logger.error("[BINANCE] Backtesting requires API access to fetch historical data")
+                logger.error("[BINANCE] Options: 1) Use VPN  2) Run from allowed location  3) Use pre-cached data")
+                raise
             return
 
         # Trading client (respects paper_trading flag)

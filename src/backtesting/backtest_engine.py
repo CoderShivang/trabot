@@ -144,7 +144,7 @@ class BacktestEngine:
         # Backtests must use real BTC/USDT Perpetual Futures data, not testnet
         # Don't use backtest_mode during init - we need to fetch data first
         self.binance_client = BinanceClient(self.config, force_mainnet_data=True, backtest_mode=False)
-        await self.binance_client.connect()
+        await self.binance_client.connect(skip_ping=True)  # Skip ping to avoid geo-restrictions
 
         self.feedback_system = AdaptiveFeedbackSystem(self.config)
         self.context_analyzer = ContextAnalyzer(self.config, self.binance_client)

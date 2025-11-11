@@ -60,33 +60,52 @@ class CLCEngine:
         reasons = []
         bias_votes = 0
 
+        # DEBUG: Log entry parameters
+        logger.debug(f"[CLC] Evaluating {direction} @ price={current_price:.2f}, vwap={ctx.vwap:.2f}, ema50={ctx.ema50:.2f}, ema200={ctx.ema200:.2f}")
+
         # Price vs VWAP
         if current_price > ctx.vwap:
             bias_votes += 1
             if direction == "LONG":
-                score_ctx += 20; reasons.append("Above VWAP (bullish for LONG)")
+                score_ctx += 20
+                reasons.append("Above VWAP (bullish for LONG)")
+                logger.debug(f"[CLC] {direction}: Price > VWAP, adding 20 points (now {score_ctx})")
             else:
-                score_ctx += 5; reasons.append("Above VWAP (bearish for SHORT)")
+                score_ctx += 5
+                reasons.append("Above VWAP (bearish for SHORT)")
+                logger.debug(f"[CLC] {direction}: Price > VWAP (counter-trend), adding 5 points (now {score_ctx})")
         else:
             bias_votes -= 1
             if direction == "SHORT":
-                score_ctx += 20; reasons.append("Below VWAP (bearish for SHORT)")
+                score_ctx += 20
+                reasons.append("Below VWAP (bearish for SHORT)")
+                logger.debug(f"[CLC] {direction}: Price < VWAP, adding 20 points (now {score_ctx})")
             else:
-                score_ctx += 5; reasons.append("Below VWAP (bullish for LONG)")
+                score_ctx += 5
+                reasons.append("Below VWAP (bullish for LONG)")
+                logger.debug(f"[CLC] {direction}: Price < VWAP (counter-trend), adding 5 points (now {score_ctx})")
 
         # EMA trend
         if ctx.ema50 > ctx.ema200:
             bias_votes += 1
             if direction == "LONG":
-                score_ctx += 25; reasons.append("EMA50 > EMA200 (bullish for LONG)")
+                score_ctx += 25
+                reasons.append("EMA50 > EMA200 (bullish for LONG)")
+                logger.debug(f"[CLC] {direction}: EMA50 > EMA200, adding 25 points (now {score_ctx})")
             else:
-                score_ctx += 10; reasons.append("EMA50 > EMA200 (bearish for SHORT)")
+                score_ctx += 10
+                reasons.append("EMA50 > EMA200 (bearish for SHORT)")
+                logger.debug(f"[CLC] {direction}: EMA50 > EMA200 (counter-trend), adding 10 points (now {score_ctx})")
         else:
             bias_votes -= 1
             if direction == "SHORT":
-                score_ctx += 25; reasons.append("EMA50 < EMA200 (bearish for SHORT)")
+                score_ctx += 25
+                reasons.append("EMA50 < EMA200 (bearish for SHORT)")
+                logger.debug(f"[CLC] {direction}: EMA50 < EMA200, adding 25 points (now {score_ctx})")
             else:
-                score_ctx += 10; reasons.append("EMA50 < EMA200 (bullish for LONG)")
+                score_ctx += 10
+                reasons.append("EMA50 < EMA200 (bullish for LONG)")
+                logger.debug(f"[CLC] {direction}: EMA50 < EMA200 (counter-trend), adding 10 points (now {score_ctx})")
 
         # Determine bias
         if bias_votes >= 2:
@@ -161,6 +180,9 @@ class CLCEngine:
                  score_loc * location_w +
                  conf_score * confirmation_w +
                  bo_score * big_orders_w)
+
+        # DEBUG: Log score calculation
+        logger.debug(f"[CLC] {direction} Final: ctx={score_ctx:.1f}*{context_w} + loc={score_loc:.1f}*{location_w} + conf={conf_score:.1f}*{confirmation_w} + bo={bo_score:.1f}*{big_orders_w} = {total:.1f}")
 
         # Apply feedback-adjusted threshold logic if available
         adjusted_threshold = getattr(self.config.scoring, 'min_entry_score', 75.0)

@@ -60,4 +60,4 @@ notifications:
   telegram:
     enabled: false
 logging:
-  level: INFO
+  level: DEBUG
