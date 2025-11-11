@@ -142,7 +142,8 @@ class BacktestEngine:
 
         # CRITICAL: Use force_mainnet_data=True to fetch REAL market data
         # Backtests must use real BTC/USDT Perpetual Futures data, not testnet
-        self.binance_client = BinanceClient(self.config, force_mainnet_data=True)
+        # Don't use backtest_mode during init - we need to fetch data first
+        self.binance_client = BinanceClient(self.config, force_mainnet_data=True, backtest_mode=False)
         await self.binance_client.connect()
 
         self.feedback_system = AdaptiveFeedbackSystem(self.config)

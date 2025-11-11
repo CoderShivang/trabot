@@ -12,15 +12,21 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 class BinanceClient:
-    def __init__(self, config, force_mainnet_data=False):
+    def __init__(self, config, force_mainnet_data=False, backtest_mode=False):
         self.config = config
         self.rest = None
         self.data_client = None  # Separate client for historical data
         self.force_mainnet_data = force_mainnet_data
+        self.backtest_mode = backtest_mode  # Skip connection in backtest mode
         self.orderbooks = {sym: OrderBookDepth(symbol=sym, levels={}) for sym in config.trading.symbols}
         self.backtest_cache = None  # Cache for backtest mode
 
     async def connect(self):
+        # Skip connection in backtest mode - we'll use cached data only
+        if self.backtest_mode:
+            logger.info("[BINANCE] Backtest mode - skipping API connection (will use cached data)")
+            return
+
         # Trading client (respects paper_trading flag)
         if self.config.trading.paper_trading:
             self.rest = Client(api_key=self.config.api_key, api_secret=self.config.api_secret, testnet=True)
@@ -94,7 +100,12 @@ class BinanceClient:
                 logger.debug(f"[BINANCE] Returning {len(result)} cached {interval} klines for {symbol}")
                 return result
 
-        # Fallback to live API (live trading mode)
+        # In backtest mode without cache, return empty (shouldn't happen if cache is set up properly)
+        if self.backtest_mode:
+            logger.warning(f"[BINANCE] Backtest mode but no cache for {symbol} {interval} - returning empty")
+            return []
+
+        # Fallback to live API (live trading mode only)
         try:
             kl = self.data_client.futures_klines(symbol=symbol, interval=interval, limit=limit)
             return kl
