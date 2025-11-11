@@ -80,12 +80,13 @@ class CLCEngine:
         sr_zones = locations.get('sr_zones', [])
         max_dist = self.config.clc_strategy.location.get('max_distance_from_level_pct', 0.005) if isinstance(self.config.clc_strategy.location, dict) else 0.005
         for z in sr_zones:
-            dist = abs(current_price - z['level'])/current_price
+            # SRZone is a dataclass, access attributes not dict keys
+            dist = abs(current_price - z.level)/current_price
             if dist <= max_dist:
                 at_location = True
-                score_loc += 40 * z.get('weight',1.0)
+                score_loc += 40 * (z.strength / 10.0)  # Normalize strength (0-10) to weight (0-1)
                 loc_type = LocationType.SR_ZONE
-                loc_reasons.append(f"At SR {z['level']}")
+                loc_reasons.append(f"At SR {z.level}")
                 break
         # VWAP bands
         vwap = locations.get('vwap_15m')
