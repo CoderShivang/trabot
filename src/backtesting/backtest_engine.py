@@ -197,7 +197,7 @@ class BacktestEngine:
         for i, kline in enumerate(klines):
             if i % 100 == 0:
                 progress = (i / total_candles) * 100
-                logger.info(f"[BACKTEST] Progress: {progress:.1f}% ({i}/{total_candles} candles)")
+                logger.info(f"[BACKTEST] Progress: {progress:.1f}% ({i}/{total_candles} candles), Trades: {len(self.closed_trades)}")
 
             # Extract candle data
             timestamp = int(kline[0])
