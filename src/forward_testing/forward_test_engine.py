@@ -117,6 +117,7 @@ class ForwardTestEngine:
         # Metrics
         self.session_start = datetime.now()
         self.last_trade_time: Dict[str, int] = {}
+        self.last_save_time = 0  # For periodic saves to update dashboard
 
         # Results storage
         self.results_file = Path("data/forward_test_results.json")
@@ -234,6 +235,13 @@ Time: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}
                 # Check for new entry signals
                 elif self._can_open_position(symbol):
                     await self._evaluate_entry(symbol)
+
+            # Save results every 10 seconds for live dashboard
+            current_time = time.time()
+            if current_time - self.last_save_time >= 10:
+                metrics = self._calculate_metrics()
+                self._save_results(metrics)
+                self.last_save_time = current_time
 
         except Exception as e:
             logger.error(f"[FORWARD_TEST] Error in trading cycle: {e}", exc_info=True)
@@ -528,8 +536,15 @@ Time: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}
         return metrics
 
     def _save_results(self, metrics: ForwardTestMetrics):
-        """Save results to file"""
+        """Save results to file (including open positions for live dashboard)"""
         try:
+            # Combine closed trades with open positions for live monitoring
+            all_trades = list(self.closed_trades)
+
+            # Add open positions (with current prices)
+            for symbol, pos in self.positions.items():
+                all_trades.append(asdict(pos))
+
             results = {
                 'session_start': metrics.session_start.isoformat(),
                 'session_end': metrics.session_end.isoformat() if metrics.session_end else None,
@@ -550,7 +565,8 @@ Time: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}
                     'current_balance': metrics.current_balance,
                     'roi_pct': metrics.roi_pct
                 },
-                'trades': self.closed_trades
+                'trades': all_trades,  # Includes both closed and open
+                'has_open_position': len(self.positions) > 0
             }
 
             with open(self.results_file, 'w') as f:
