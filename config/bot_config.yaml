@@ -1,0 +1,53 @@
+trading:
+  symbols: [BTCUSDT, ETHUSDT]
+  position_size_usdt: 100.0
+  max_positions: 2
+  leverage: 100
+  taker_fee_bps: 20   # 0.2% example; adjust
+  paper_trading: true
+
+clc_strategy:
+  context:
+    primary_timeframe: 1h
+    secondary_timeframe: 15m
+    execution_timeframe: 1m
+    use_vwap: true
+    use_ema: true
+    ema_periods: [50,200]
+    min_trend_strength: 0.02
+  location:
+    sr_lookback_bars: 500
+    sr_min_touches: 3
+    sr_zone_size_pct: 0.003
+    key_emas: [20,50,200]
+    max_distance_from_level_pct: 0.005
+  confirmation:
+    min_signals_required: 2
+    imbalance_threshold: 0.7
+    delta_threshold: 0.6
+    absorption_min_refills: 3
+    sweep_volume_multiplier: 3.0
+  big_orders:
+    size_multiplier: 5.0
+    min_btc_order_usdt: 50000
+    min_eth_order_usdt: 30000
+    detect_icebergs: true
+    iceberg_refill_threshold: 3
+risk:
+  max_daily_loss_usdt: 50.0   # Hard daily loss limit (you requested $50/day)
+  per_trade_max_loss_usdt: 20.0  # hard per-trade loss cap
+  trailing_stop_enabled: true
+  trailing_stop_activation: 100
+  trailing_stop_distance: 50
+scoring:
+  min_entry_score: 75.0
+learning:
+  min_labels_before_learning: 10
+  learning_rate: 0.05
+notifications:
+  discord:
+    enabled: false
+  telegram:
+    enabled: false
+logging:
+  level: INFO

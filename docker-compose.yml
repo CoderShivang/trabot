@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  bot:
+    build: .
+    container_name: btc_scalper_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./config:/app/config
+    ports:
+      - "8501:8501"
+    command: python -u src/main.py
+    networks:
+      - trading_network
+  dashboard:
+    build: .
+    container_name: scalper_dashboard
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    ports:
+      - "8502:8501"
+    command: streamlit run frontend/app.py --server.port=8501 --server.address=0.0.0.0
+    networks:
+      - trading_network
+    depends_on:
+      - bot
+networks:
+  trading_network:
+    driver: bridge
