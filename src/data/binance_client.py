@@ -89,8 +89,16 @@ class BinanceClient:
         self.backtest_cache = klines_cache
         logger.info("[BINANCE] Backtest cache enabled - will use pre-loaded data")
 
-    async def get_klines(self, symbol: str, interval: str, limit: int = 200):
-        """Fetch historical klines - check cache first if in backtest mode"""
+    async def get_klines(self, symbol: str, interval: str, limit: int = 200, start_time: int = None, end_time: int = None):
+        """Fetch historical klines - check cache first if in backtest mode
+
+        Args:
+            symbol: Trading pair (e.g., 'BTCUSDT')
+            interval: Timeframe ('1m', '5m', '15m', '1h', etc.)
+            limit: Number of candles to fetch (max 1000)
+            start_time: Start timestamp in milliseconds (optional)
+            end_time: End timestamp in milliseconds (optional)
+        """
         # Check cache first (backtest mode)
         if self.backtest_cache and symbol in self.backtest_cache:
             if interval in self.backtest_cache[symbol]:
@@ -107,7 +115,20 @@ class BinanceClient:
 
         # Fallback to live API (live trading mode only)
         try:
-            kl = self.data_client.futures_klines(symbol=symbol, interval=interval, limit=limit)
+            # Build kwargs for API call
+            kwargs = {
+                'symbol': symbol,
+                'interval': interval,
+                'limit': limit
+            }
+
+            # Add date range if provided
+            if start_time is not None:
+                kwargs['startTime'] = start_time
+            if end_time is not None:
+                kwargs['endTime'] = end_time
+
+            kl = self.data_client.futures_klines(**kwargs)
             return kl
         except Exception as e:
             logger.error(f"[BINANCE] klines error: {e}")

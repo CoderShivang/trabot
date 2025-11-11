@@ -268,26 +268,32 @@ class BacktestEngine:
 
         while current_start < end_ms:
             try:
+                # Calculate chunk end time (either 1000 candles ahead or end_ms, whichever is smaller)
+                chunk_end = min(current_start + (1000 * timeframe_ms), end_ms)
+
                 klines = await self.binance_client.get_klines(
                     symbol=symbol,
                     interval=timeframe,
-                    limit=1000
+                    limit=1000,
+                    start_time=current_start,
+                    end_time=chunk_end
                 )
 
                 if not klines:
+                    logger.warning(f"[BACKTEST] No klines returned for {symbol} starting at {current_start}")
                     break
 
-                # Filter by date range
-                filtered = [k for k in klines if start_ms <= k[0] <= end_ms]
-                all_klines.extend(filtered)
+                # Add klines to cache
+                all_klines.extend(klines)
+                logger.info(f"[BACKTEST] Fetched {len(klines)} candles (total: {len(all_klines)})")
 
-                # Move to next chunk
+                # Move to next chunk (start after the last candle we received)
                 if klines:
                     current_start = klines[-1][0] + timeframe_ms
                 else:
                     break
 
-                # Rate limiting
+                # Rate limiting to avoid API throttling
                 await asyncio.sleep(0.5)
 
             except Exception as e:
@@ -296,16 +302,20 @@ class BacktestEngine:
 
         self.klines_cache[symbol][timeframe] = all_klines
 
-        # Also load higher timeframes for context
+        # Also load higher timeframes for context (15m and 1h)
         for tf in ['15m', '1h']:
-            if tf != timeframe:
+            if tf != timeframe and tf not in self.klines_cache[symbol]:
                 try:
+                    logger.info(f"[BACKTEST] Loading {tf} candles for context...")
                     klines = await self.binance_client.get_klines(
                         symbol=symbol,
                         interval=tf,
-                        limit=1000
+                        limit=1000,
+                        start_time=start_ms,
+                        end_time=end_ms
                     )
                     self.klines_cache[symbol][tf] = klines
+                    logger.info(f"[BACKTEST] Loaded {len(klines)} {tf} candles")
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(f"[BACKTEST] Error loading {tf} klines: {e}")
