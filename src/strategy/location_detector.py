@@ -588,8 +588,8 @@ class LocationDetector:
                 # Score based on zone strength (max 40 points)
                 location_score = 40 * (zone.strength / 10.0)
 
-                logger.info(f"[LOCATION] At zone: ${zone.level:.2f} ({zone.zone_type}), "
-                           f"strength {zone.strength:.1f}/10, methods: {[m.value for m in zone.methods]}")
+                logger.debug(f"[LOCATION] At zone: ${zone.level:.2f} ({zone.zone_type}), "
+                            f"strength {zone.strength:.1f}/10, methods: {[m.value for m in zone.methods]}")
                 break
 
         return at_location, best_zone, location_score
