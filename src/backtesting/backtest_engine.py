@@ -525,20 +525,21 @@ class BacktestEngine:
     ):
         """Open a simulated position"""
 
-        # Calculate position size
-        risk_amount = self.config.risk.per_trade_max_loss_usdt
+        # Calculate position size with leverage
+        leverage = self.config.trading.leverage
+        initial_margin = self.config.trading.position_size_usdt  # e.g., $100
+        notional_value = initial_margin * leverage  # e.g., $100 * 100 = $10,000
 
+        # Quantity in BTC (or ETH)
+        quantity = notional_value / entry_price
+
+        # Get risk/reward parameters
         if symbol.startswith("BTC"):
             risk_points = self.config.trading.btc_risk_points
             target_points = self.config.trading.btc_target_points
         else:
             risk_points = self.config.trading.eth_risk_points
             target_points = self.config.trading.eth_target_points
-
-        # Quantity calculation
-        base_qty = self.config.trading.position_size_usdt / entry_price
-        max_qty_by_risk = risk_amount / risk_points if risk_points > 0 else base_qty
-        quantity = min(base_qty, max_qty_by_risk)
 
         # Calculate stop loss and take profit
         if direction == "LONG":
@@ -677,6 +678,11 @@ class BacktestEngine:
             self.consecutive_wins = 0
             self.max_consecutive_losses = max(self.max_consecutive_losses, self.consecutive_losses)
 
+        # Calculate ROE (Return on Equity) - PnL relative to initial margin
+        leverage = self.config.trading.leverage
+        initial_margin = self.config.trading.position_size_usdt
+        roe_pct = (net_pnl / initial_margin) * 100
+
         # Record trade
         trade_record = {
             'symbol': symbol,
@@ -686,10 +692,14 @@ class BacktestEngine:
             'exit_price': exit_price,
             'exit_time': timestamp,
             'quantity': pos.quantity,
+            'notional_value': pos.entry_price * pos.quantity,
+            'initial_margin': initial_margin,
+            'leverage': leverage,
             'pnl': pnl,
             'fees': total_fees,
             'net_pnl': net_pnl,
-            'pnl_pct': (net_pnl / (pos.entry_price * pos.quantity)) * 100,
+            'pnl_pct': (net_pnl / (pos.entry_price * pos.quantity)) * 100,  # PnL % on notional
+            'roe_pct': roe_pct,  # ROE % on margin
             'exit_reason': reason,
             'duration_minutes': (timestamp - pos.entry_time) / 60000,
             'clc_score': pos.clc_score

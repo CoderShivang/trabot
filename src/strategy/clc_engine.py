@@ -53,22 +53,42 @@ class CLCEngine:
         self.feedback_system = feedback_system
 
     async def evaluate_trade(self, symbol: str, direction: str, current_price: float, orderbook, recent_trades) -> CLCScore:
-        # 1) context
+        # 1) context - adjusted for direction
         ctx = await self.context_analyzer.get_context(symbol, "1h", current_price)
         bias = ContextBias.NEUTRAL
         score_ctx = 0.0
         reasons = []
         bias_votes = 0
+
+        # Price vs VWAP
         if current_price > ctx.vwap:
-            score_ctx += 20; reasons.append("Above 1H VWAP"); bias_votes += 1
-        else:
-            score_ctx += 5; reasons.append("Below 1H VWAP")
-        if ctx.ema50 > ctx.ema200:
-            score_ctx += 25; reasons.append("EMA50 > EMA200")
             bias_votes += 1
+            if direction == "LONG":
+                score_ctx += 20; reasons.append("Above VWAP (bullish for LONG)")
+            else:
+                score_ctx += 5; reasons.append("Above VWAP (bearish for SHORT)")
         else:
-            score_ctx += 10; reasons.append("EMA50 <= EMA200")
             bias_votes -= 1
+            if direction == "SHORT":
+                score_ctx += 20; reasons.append("Below VWAP (bearish for SHORT)")
+            else:
+                score_ctx += 5; reasons.append("Below VWAP (bullish for LONG)")
+
+        # EMA trend
+        if ctx.ema50 > ctx.ema200:
+            bias_votes += 1
+            if direction == "LONG":
+                score_ctx += 25; reasons.append("EMA50 > EMA200 (bullish for LONG)")
+            else:
+                score_ctx += 10; reasons.append("EMA50 > EMA200 (bearish for SHORT)")
+        else:
+            bias_votes -= 1
+            if direction == "SHORT":
+                score_ctx += 25; reasons.append("EMA50 < EMA200 (bearish for SHORT)")
+            else:
+                score_ctx += 10; reasons.append("EMA50 < EMA200 (bullish for LONG)")
+
+        # Determine bias
         if bias_votes >= 2:
             bias = ContextBias.BULLISH
         elif bias_votes <= -2:

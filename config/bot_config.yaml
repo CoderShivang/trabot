@@ -45,7 +45,7 @@ risk:
   trailing_stop_activation: 100
   trailing_stop_distance: 50
 scoring:
-  min_entry_score: 25.0  # Lowered from 75 to allow trades (highest seen was 31.6)
+  min_entry_score: 50.0  # Raised to reduce overtrading (was 25, too many entries)
   context_weight: 0.25      # 25% weight for trend/bias context
   location_weight: 0.40     # 40% weight for S/R location
   confirmation_weight: 0.25 # 25% weight for orderflow confirmation
