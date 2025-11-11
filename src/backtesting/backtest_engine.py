@@ -484,7 +484,8 @@ class BacktestEngine:
 
         # Cooldown between trades
         last_trade = self.last_trade_time.get(symbol, 0)
-        if (timestamp - last_trade) < (self.config.trading.get('min_time_between_trades_seconds', 180) * 1000):
+        min_cooldown = getattr(self.config.trading, 'min_time_between_trades_seconds', 180)
+        if (timestamp - last_trade) < (min_cooldown * 1000):
             return False
 
         return True
