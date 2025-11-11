@@ -311,6 +311,9 @@ class BacktestEngine:
 
         logger.info(f"[BACKTEST] Loaded {len(all_klines)} {timeframe} candles")
 
+        # Inject cache into binance_client to prevent live API calls during backtest
+        self.binance_client.set_backtest_cache(self.klines_cache)
+
     async def _evaluate_entry(
         self,
         symbol: str,

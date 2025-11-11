@@ -18,6 +18,7 @@ class BinanceClient:
         self.data_client = None  # Separate client for historical data
         self.force_mainnet_data = force_mainnet_data
         self.orderbooks = {sym: OrderBookDepth(symbol=sym, levels={}) for sym in config.trading.symbols}
+        self.backtest_cache = None  # Cache for backtest mode
 
     async def connect(self):
         # Trading client (respects paper_trading flag)
@@ -77,8 +78,23 @@ class BinanceClient:
             logger.error(f"[BINANCE] recent trades error: {e}")
             return []
 
+    def set_backtest_cache(self, klines_cache: dict):
+        """Set cached klines for backtesting mode"""
+        self.backtest_cache = klines_cache
+        logger.info("[BINANCE] Backtest cache enabled - will use pre-loaded data")
+
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
-        """Fetch historical klines - uses data_client for real market data"""
+        """Fetch historical klines - check cache first if in backtest mode"""
+        # Check cache first (backtest mode)
+        if self.backtest_cache and symbol in self.backtest_cache:
+            if interval in self.backtest_cache[symbol]:
+                cached = self.backtest_cache[symbol][interval]
+                # Return last N candles from cache
+                result = cached[-limit:] if len(cached) > limit else cached
+                logger.debug(f"[BINANCE] Returning {len(result)} cached {interval} klines for {symbol}")
+                return result
+
+        # Fallback to live API (live trading mode)
         try:
             kl = self.data_client.futures_klines(symbol=symbol, interval=interval, limit=limit)
             return kl
