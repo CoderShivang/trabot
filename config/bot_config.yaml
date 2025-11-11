@@ -6,10 +6,10 @@ trading:
   taker_fee_bps: 20   # 0.2% example; adjust
   paper_trading: true
   min_time_between_trades_seconds: 900  # 15 minutes cooldown (reduced overtrading)
-  btc_risk_points: 500.0    # $500 stop loss distance for BTC
-  btc_target_points: 1000.0  # $1000 take profit distance for BTC (2:1 R/R)
-  eth_risk_points: 50.0      # $50 stop loss distance for ETH
-  eth_target_points: 100.0   # $100 take profit distance for ETH
+  btc_risk_points: 140.0    # $140 stop loss for ~$20 risk with 100x leverage
+  btc_target_points: 280.0  # $280 take profit (2:1 R/R)
+  eth_risk_points: 15.0     # $15 stop loss distance for ETH
+  eth_target_points: 30.0   # $30 take profit for ETH (2:1 R/R)
 
 clc_strategy:
   context:
@@ -22,10 +22,10 @@ clc_strategy:
     min_trend_strength: 0.02
   location:
     sr_lookback_bars: 500
-    sr_min_touches: 3
+    sr_min_touches: 2  # Lowered from 3 to 2 (less strict for backtesting)
     sr_zone_size_pct: 0.003
     key_emas: [20,50,200]
-    max_distance_from_level_pct: 0.005
+    max_distance_from_level_pct: 0.01  # Increased from 0.005 to 0.01 (1% tolerance)
   confirmation:
     min_signals_required: 0  # Set to 0 for backtesting (simulated orderbook limitation)
     imbalance_threshold: 0.55  # Lowered for simulated data (balanced orderbook ≈ 0.5)
