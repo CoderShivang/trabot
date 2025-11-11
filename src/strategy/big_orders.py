@@ -162,7 +162,7 @@ class BigOrdersDetector:
                 if timestamps[i] - timestamps[i-1] < 5000:
                     windows += 1
             if windows >= 3:
-                logger.info(f"[SPOOF] {symbol} potential spoof at {price}")
+                logger.debug(f"[SPOOF] {symbol} potential spoof at {price}")
                 return True
         return False
 
