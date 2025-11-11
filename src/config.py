@@ -34,3 +34,15 @@ class Config:
         cfg.learning = type('L', (), cfg.learning)()
         cfg.notifications = type('N', (), cfg.notifications)()
         return cfg
+
+def load_config(config_path: str = 'config/bot_config.yaml') -> Config:
+    """
+    Helper function to load configuration from YAML file.
+
+    Args:
+        config_path: Path to configuration file
+
+    Returns:
+        Config object with loaded settings
+    """
+    return Config.from_yaml(config_path)
