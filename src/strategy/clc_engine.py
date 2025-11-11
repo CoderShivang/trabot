@@ -131,13 +131,19 @@ class CLCEngine:
 
         # Combine weighted score
         weights = self.config.scoring
-        total = (score_ctx * weights.context_weight +
-                 score_loc * weights.location_weight +
-                 conf_score * weights.confirmation_weight +
-                 bo_score * weights.big_orders_weight)
+        # Safe attribute access with defaults
+        context_w = getattr(weights, 'context_weight', 0.25)
+        location_w = getattr(weights, 'location_weight', 0.40)
+        confirmation_w = getattr(weights, 'confirmation_weight', 0.25)
+        big_orders_w = getattr(weights, 'big_orders_weight', 0.10)
+
+        total = (score_ctx * context_w +
+                 score_loc * location_w +
+                 conf_score * confirmation_w +
+                 bo_score * big_orders_w)
 
         # Apply feedback-adjusted threshold logic if available
-        adjusted_threshold = self.config.scoring.min_entry_score
+        adjusted_threshold = getattr(self.config.scoring, 'min_entry_score', 75.0)
         if self.feedback_system and self.feedback_system.learning_enabled:
             adjusted_threshold = self.feedback_system.get_adjusted_threshold(direction, adjusted_threshold)
 

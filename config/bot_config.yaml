@@ -46,6 +46,10 @@ risk:
   trailing_stop_distance: 50
 scoring:
   min_entry_score: 75.0
+  context_weight: 0.25      # 25% weight for trend/bias context
+  location_weight: 0.40     # 40% weight for S/R location
+  confirmation_weight: 0.25 # 25% weight for orderflow confirmation
+  big_orders_weight: 0.10   # 10% weight for big orders detection
 learning:
   min_labels_before_learning: 10
   learning_rate: 0.05
