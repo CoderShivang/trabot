@@ -57,6 +57,53 @@ def print_metrics(metrics):
     print("\n" + "=" * 60 + "\n")
 
 
+def print_trades_with_ist(trades):
+    """Print detailed trade information with IST timestamps"""
+    from datetime import datetime, timedelta, timezone
+
+    if not trades:
+        print("No trades executed during backtest period.")
+        return
+
+    print("\n" + "=" * 80)
+    print("DETAILED TRADE LOG (IST - Indian Standard Time)")
+    print("=" * 80)
+
+    # IST is UTC+5:30
+    ist_offset = timedelta(hours=5, minutes=30)
+
+    for i, trade in enumerate(trades, 1):
+        # Convert timestamps from milliseconds to datetime
+        entry_time_utc = datetime.fromtimestamp(trade['entry_time'] / 1000, tz=timezone.utc)
+        exit_time_utc = datetime.fromtimestamp(trade['exit_time'] / 1000, tz=timezone.utc)
+
+        # Convert to IST
+        entry_time_ist = entry_time_utc + ist_offset
+        exit_time_ist = exit_time_utc + ist_offset
+
+        print(f"\n{'─' * 80}")
+        print(f"TRADE #{i}")
+        print(f"{'─' * 80}")
+        print(f"  Direction:       {trade['direction']}")
+        print(f"  Entry Time IST:  {entry_time_ist.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        print(f"  Entry Price:     ${trade['entry_price']:,.2f}")
+        print(f"  Exit Time IST:   {exit_time_ist.strftime('%Y-%m-%d %H:%M:%S')} IST")
+        print(f"  Exit Price:      ${trade['exit_price']:,.2f}")
+        print(f"  Exit Reason:     {trade['exit_reason']}")
+        print(f"  Duration:        {trade['duration_minutes']:.1f} minutes")
+        print(f"  Quantity:        {trade['quantity']:.8f}")
+        print(f"  Notional:        ${trade['notional_value']:,.2f}")
+        print(f"  Leverage:        {trade['leverage']}x")
+        print(f"  Initial Margin:  ${trade['initial_margin']:.2f}")
+        print(f"  Gross P&L:       ${trade['pnl']:+.2f}")
+        print(f"  Fees:            ${trade['fees']:.2f}")
+        print(f"  Net P&L:         ${trade['net_pnl']:+.2f}")
+        print(f"  ROE:             {trade['roe_pct']:+.2f}%")
+        print(f"  CLC Score:       {trade.get('clc_score', 'N/A')}")
+
+    print("\n" + "=" * 80 + "\n")
+
+
 async def run_backtest(args):
     """Run backtest with specified parameters"""
 
@@ -91,6 +138,9 @@ async def run_backtest(args):
 
     # Print results
     print_metrics(metrics)
+
+    # Print detailed trade information with IST timestamps
+    print_trades_with_ist(engine.closed_trades)
 
     # Disconnect
     await engine.binance_client.disconnect()
