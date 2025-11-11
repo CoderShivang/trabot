@@ -5,11 +5,11 @@ trading:
   leverage: 100
   taker_fee_bps: 20   # 0.2% example; adjust
   paper_trading: true
-  min_time_between_trades_seconds: 180  # 3 minutes cooldown between trades
-  btc_risk_points: 200.0    # $200 stop loss distance for BTC
-  btc_target_points: 300.0  # $300 take profit distance for BTC (1.5:1 R/R)
-  eth_risk_points: 20.0      # $20 stop loss distance for ETH
-  eth_target_points: 40.0    # $40 take profit distance for ETH
+  min_time_between_trades_seconds: 900  # 15 minutes cooldown (reduced overtrading)
+  btc_risk_points: 500.0    # $500 stop loss distance for BTC
+  btc_target_points: 1000.0  # $1000 take profit distance for BTC (2:1 R/R)
+  eth_risk_points: 50.0      # $50 stop loss distance for ETH
+  eth_target_points: 100.0   # $100 take profit distance for ETH
 
 clc_strategy:
   context:
