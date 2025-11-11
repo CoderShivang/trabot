@@ -12,19 +12,34 @@ from utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 class BinanceClient:
-    def __init__(self, config):
+    def __init__(self, config, force_mainnet_data=False):
         self.config = config
         self.rest = None
+        self.data_client = None  # Separate client for historical data
+        self.force_mainnet_data = force_mainnet_data
         self.orderbooks = {sym: OrderBookDepth(symbol=sym, levels={}) for sym in config.trading.symbols}
 
     async def connect(self):
+        # Trading client (respects paper_trading flag)
         if self.config.trading.paper_trading:
             self.rest = Client(api_key=self.config.api_key, api_secret=self.config.api_secret, testnet=True)
+            logger.info("[BINANCE] Trading client connected (TESTNET)")
         else:
             self.rest = Client(api_key=self.config.api_key, api_secret=self.config.api_secret)
+            logger.info("[BINANCE] Trading client connected (MAINNET)")
+
+        # Data client (ALWAYS mainnet for accurate historical data)
+        # Historical data (klines, trades) should always come from real market
+        if self.force_mainnet_data or self.config.trading.paper_trading:
+            # Use mainnet for historical data even when paper trading
+            self.data_client = Client(api_key=self.config.api_key, api_secret=self.config.api_secret, testnet=False)
+            logger.info("[BINANCE] Data client connected (MAINNET - real historical data)")
+        else:
+            # Use same client for both trading and data
+            self.data_client = self.rest
+
         try:
             self.rest.futures_ping()
-            logger.info("[BINANCE] REST connected")
         except Exception as e:
             logger.error("[BINANCE] connect failed: %s", e)
             raise
@@ -45,8 +60,9 @@ class BinanceClient:
             return self.orderbooks[symbol]
 
     async def get_recent_trades(self, symbol: str, limit: int = 200):
+        """Fetch recent trades - uses data_client for real market data"""
         try:
-            trades = self.rest.futures_recent_trades(symbol=symbol, limit=limit)
+            trades = self.data_client.futures_recent_trades(symbol=symbol, limit=limit)
             # adapt to uniform keys
             normalized = []
             for t in trades:
@@ -62,8 +78,9 @@ class BinanceClient:
             return []
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
+        """Fetch historical klines - uses data_client for real market data"""
         try:
-            kl = self.rest.futures_klines(symbol=symbol, interval=interval, limit=limit)
+            kl = self.data_client.futures_klines(symbol=symbol, interval=interval, limit=limit)
             return kl
         except Exception as e:
             logger.error(f"[BINANCE] klines error: {e}")

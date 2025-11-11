@@ -140,7 +140,9 @@ class BacktestEngine:
         """Initialize backtesting components"""
         logger.info("[BACKTEST] Initializing components...")
 
-        self.binance_client = BinanceClient(self.config)
+        # CRITICAL: Use force_mainnet_data=True to fetch REAL market data
+        # Backtests must use real BTC/USDT Perpetual Futures data, not testnet
+        self.binance_client = BinanceClient(self.config, force_mainnet_data=True)
         await self.binance_client.connect()
 
         self.feedback_system = AdaptiveFeedbackSystem(self.config)
