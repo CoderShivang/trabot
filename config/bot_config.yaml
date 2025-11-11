@@ -27,11 +27,12 @@ clc_strategy:
     key_emas: [20,50,200]
     max_distance_from_level_pct: 0.005
   confirmation:
-    min_signals_required: 1  # Lowered from 2 to 1 for backtest tuning
-    imbalance_threshold: 0.7
-    delta_threshold: 0.6
+    min_signals_required: 0  # Set to 0 for backtesting (simulated orderbook limitation)
+    imbalance_threshold: 0.55  # Lowered for simulated data (balanced orderbook ≈ 0.5)
+    delta_threshold: 0.52  # Lowered for simulated data
     absorption_min_refills: 3
     sweep_volume_multiplier: 3.0
+    # NOTE: In live trading, increase min_signals_required to 2+ for real orderflow
   big_orders:
     size_multiplier: 5.0
     min_btc_order_usdt: 50000
@@ -45,11 +46,12 @@ risk:
   trailing_stop_activation: 100
   trailing_stop_distance: 50
 scoring:
-  min_entry_score: 50.0  # Raised to reduce overtrading (was 25, too many entries)
+  min_entry_score: 20.0  # Adjusted for new scoring system (max ~31 for perfect setup)
   context_weight: 0.25      # 25% weight for trend/bias context
   location_weight: 0.40     # 40% weight for S/R location
   confirmation_weight: 0.25 # 25% weight for orderflow confirmation
   big_orders_weight: 0.10   # 10% weight for big orders detection
+  # With new scoring: Strong trend (60pts) * 0.25 + Key level (40pts) * 0.40 = ~31 total
 learning:
   min_labels_before_learning: 10
   learning_rate: 0.05

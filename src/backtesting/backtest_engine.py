@@ -108,9 +108,10 @@ class BacktestEngine:
     - Fee calculation
     """
 
-    def __init__(self, config):
+    def __init__(self, config, offline_mode=False):
         self.config = config
         self.binance_client = None
+        self.offline_mode = offline_mode  # Use cached data instead of API
         self.starting_balance = 100.0  # $100 starting capital
         self.current_balance = self.starting_balance
 
@@ -142,9 +143,15 @@ class BacktestEngine:
 
         # CRITICAL: Use force_mainnet_data=True to fetch REAL market data
         # Backtests must use real BTC/USDT Perpetual Futures data, not testnet
-        # Don't use backtest_mode during init - we need to fetch data first
-        self.binance_client = BinanceClient(self.config, force_mainnet_data=True, backtest_mode=False)
-        await self.binance_client.connect(skip_ping=True)  # Skip ping to avoid geo-restrictions
+        if self.offline_mode:
+            # Offline mode: Create mock client, no API connection needed
+            logger.info("[BACKTEST] Offline mode - will use cached data only")
+            self.binance_client = BinanceClient(self.config, force_mainnet_data=True, backtest_mode=True)
+            # Don't connect in offline mode
+        else:
+            # Online mode: Connect to API to fetch data
+            self.binance_client = BinanceClient(self.config, force_mainnet_data=True, backtest_mode=False)
+            await self.binance_client.connect(skip_ping=True)  # Skip ping to avoid geo-restrictions
 
         self.feedback_system = AdaptiveFeedbackSystem(self.config)
         self.context_analyzer = ContextAnalyzer(self.config, self.binance_client)
@@ -235,6 +242,39 @@ class BacktestEngine:
 
         return metrics
 
+    def _load_cached_data(
+        self,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime
+    ):
+        """Load historical data from cached JSON file"""
+        cache_dir = Path("data/cache")
+        cache_filename = f"{symbol}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.json"
+        cache_path = cache_dir / cache_filename
+
+        if not cache_path.exists():
+            logger.error(f"[BACKTEST] Cache file not found: {cache_path}")
+            logger.error(f"[BACKTEST] Run data downloader first: python src/download_data.py {symbol} --start {start_date.strftime('%Y-%m-%d')} --end {end_date.strftime('%Y-%m-%d')}")
+            raise FileNotFoundError(f"Cached data not found: {cache_path}")
+
+        logger.info(f"[BACKTEST] Loading cached data from {cache_path}...")
+        with open(cache_path, 'r') as f:
+            data = json.load(f)
+
+        # Initialize caches
+        if symbol not in self.klines_cache:
+            self.klines_cache[symbol] = {}
+
+        # Load timeframe data
+        for tf, klines in data['timeframes'].items():
+            self.klines_cache[symbol][tf] = klines
+            logger.info(f"[BACKTEST] Loaded {len(klines)} {tf} candles from cache")
+
+        # Inject cache into binance_client
+        self.binance_client.set_backtest_cache(self.klines_cache)
+        logger.info("[BACKTEST] ✓ Cached data loaded successfully")
+
     async def _load_historical_data(
         self,
         symbol: str,
@@ -242,7 +282,12 @@ class BacktestEngine:
         end_date: datetime,
         timeframe: str
     ):
-        """Load historical klines and trades from Binance"""
+        """Load historical klines and trades from Binance or cache"""
+
+        # In offline mode, load from cache
+        if self.offline_mode:
+            self._load_cached_data(symbol, start_date, end_date)
+            return
 
         # Initialize caches
         if symbol not in self.klines_cache:

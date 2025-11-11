@@ -63,49 +63,47 @@ class CLCEngine:
         # DEBUG: Log entry parameters
         logger.debug(f"[CLC] Evaluating {direction} @ price={current_price:.2f}, vwap={ctx.vwap:.2f}, ema50={ctx.ema50:.2f}, ema200={ctx.ema200:.2f}")
 
+        # NEW APPROACH: Calculate bullish and bearish signals, then score based on direction
+        # This ensures LONG and SHORT never get the same scores in the same market conditions
+
+        bullish_score = 0
+        bearish_score = 0
+
         # Price vs VWAP
         if current_price > ctx.vwap:
+            bullish_score += 25
             bias_votes += 1
-            if direction == "LONG":
-                score_ctx += 20
-                reasons.append("Above VWAP (bullish for LONG)")
-                logger.debug(f"[CLC] {direction}: Price > VWAP, adding 20 points (now {score_ctx})")
-            else:
-                score_ctx += 5
-                reasons.append("Above VWAP (bearish for SHORT)")
-                logger.debug(f"[CLC] {direction}: Price > VWAP (counter-trend), adding 5 points (now {score_ctx})")
+            reasons.append("Price > VWAP (bullish)")
         else:
+            bearish_score += 25
             bias_votes -= 1
-            if direction == "SHORT":
-                score_ctx += 20
-                reasons.append("Below VWAP (bearish for SHORT)")
-                logger.debug(f"[CLC] {direction}: Price < VWAP, adding 20 points (now {score_ctx})")
-            else:
-                score_ctx += 5
-                reasons.append("Below VWAP (bullish for LONG)")
-                logger.debug(f"[CLC] {direction}: Price < VWAP (counter-trend), adding 5 points (now {score_ctx})")
+            reasons.append("Price < VWAP (bearish)")
 
         # EMA trend
         if ctx.ema50 > ctx.ema200:
+            bullish_score += 35
             bias_votes += 1
-            if direction == "LONG":
-                score_ctx += 25
-                reasons.append("EMA50 > EMA200 (bullish for LONG)")
-                logger.debug(f"[CLC] {direction}: EMA50 > EMA200, adding 25 points (now {score_ctx})")
-            else:
-                score_ctx += 10
-                reasons.append("EMA50 > EMA200 (bearish for SHORT)")
-                logger.debug(f"[CLC] {direction}: EMA50 > EMA200 (counter-trend), adding 10 points (now {score_ctx})")
+            reasons.append("EMA50 > EMA200 (bullish)")
         else:
+            bearish_score += 35
             bias_votes -= 1
-            if direction == "SHORT":
-                score_ctx += 25
-                reasons.append("EMA50 < EMA200 (bearish for SHORT)")
-                logger.debug(f"[CLC] {direction}: EMA50 < EMA200, adding 25 points (now {score_ctx})")
-            else:
-                score_ctx += 10
-                reasons.append("EMA50 < EMA200 (bullish for LONG)")
-                logger.debug(f"[CLC] {direction}: EMA50 < EMA200 (counter-trend), adding 10 points (now {score_ctx})")
+            reasons.append("EMA50 < EMA200 (bearish)")
+
+        # Score based on direction alignment with market conditions
+        if direction == "LONG":
+            score_ctx = bullish_score
+            # Penalize counter-trend LONGs heavily
+            if bearish_score > bullish_score:
+                score_ctx *= 0.3
+                reasons.append("LONG counter-trend penalty")
+        else:  # SHORT
+            score_ctx = bearish_score
+            # Penalize counter-trend SHORTs heavily
+            if bullish_score > bearish_score:
+                score_ctx *= 0.3
+                reasons.append("SHORT counter-trend penalty")
+
+        logger.debug(f"[CLC] {direction}: bullish={bullish_score}, bearish={bearish_score}, final_ctx={score_ctx:.1f}")
 
         # Determine bias
         if bias_votes >= 2:

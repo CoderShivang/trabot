@@ -78,7 +78,7 @@ async def run_backtest(args):
 
     # Initialize backtest engine
     logger.info("[BACKTEST] Initializing backtest engine...")
-    engine = BacktestEngine(config)
+    engine = BacktestEngine(config, offline_mode=args.offline)
     await engine.initialize()
 
     # Run backtest
@@ -107,6 +107,8 @@ def main():
                         help='Execution timeframe (default: 1m)')
     parser.add_argument('--config', default='config/bot_config.yaml',
                         help='Path to config file')
+    parser.add_argument('--offline', action='store_true',
+                        help='Use cached data instead of fetching from API')
 
     args = parser.parse_args()
 
