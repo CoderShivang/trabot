@@ -354,6 +354,13 @@ class BacktestEngine:
                 symbol, "SHORT", current_price, orderbook, recent_trades
             )
 
+            # Log scores for debugging (only log every 100 candles to avoid spam)
+            if candle_index % 100 == 0:
+                logger.info(f"[BACKTEST] Candle {candle_index} @ ${current_price:.2f}:")
+                logger.info(f"  LONG: total={long_score.total_score:.1f}, ctx={long_score.context_score:.1f}, loc={long_score.location_score:.1f}, conf={long_score.confirmation_score:.1f}, big={long_score.big_orders_score:.1f}")
+                logger.info(f"  SHORT: total={short_score.total_score:.1f}, ctx={short_score.context_score:.1f}, loc={short_score.location_score:.1f}, conf={short_score.confirmation_score:.1f}, big={short_score.big_orders_score:.1f}")
+                logger.info(f"  Min required: {self.config.scoring.min_entry_score}")
+
             # Determine best direction
             best = None
             if long_score.meets_entry_criteria(self.config.scoring.min_entry_score):
