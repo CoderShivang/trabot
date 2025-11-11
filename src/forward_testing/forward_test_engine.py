@@ -45,6 +45,7 @@ class ForwardTestPosition:
     stop_loss: float
     take_profit: float
     clc_score: Dict
+    leverage: int = 50  # Default leverage
     current_price: float = 0.0
     exit_price: Optional[float] = None
     exit_time: Optional[int] = None
@@ -339,6 +340,9 @@ Time: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}
         # Calculate quantity
         quantity = position_size / entry_price
 
+        # Get leverage from config
+        leverage = self.config.trading.leverage if hasattr(self.config.trading, 'leverage') else 50
+
         # Calculate stops
         if direction == "LONG":
             stop_loss = entry_price - risk_points
@@ -357,6 +361,7 @@ Time: {self.session_start.strftime('%Y-%m-%d %H:%M:%S')}
             stop_loss=stop_loss,
             take_profit=take_profit,
             clc_score=clc_score.__dict__ if hasattr(clc_score, '__dict__') else {},
+            leverage=leverage,
             current_price=entry_price
         )
 

@@ -180,15 +180,107 @@ def display_current_position(results):
         """, unsafe_allow_html=True)
 
 
+def calculate_detailed_metrics(results):
+    """Calculate detailed metrics from trade data"""
+    if not results or 'trades' not in results:
+        return None
+
+    closed_trades = [t for t in results['trades'] if t.get('exit_price') is not None]
+
+    if not closed_trades:
+        return None
+
+    # Separate wins and losses
+    wins = [t for t in closed_trades if t.get('pnl', 0) > 0]
+    losses = [t for t in closed_trades if t.get('pnl', 0) <= 0]
+
+    # Long vs Short
+    long_trades = [t for t in closed_trades if t['direction'] == 'LONG']
+    short_trades = [t for t in closed_trades if t['direction'] == 'SHORT']
+    long_wins = [t for t in long_trades if t.get('pnl', 0) > 0]
+    short_wins = [t for t in short_trades if t.get('pnl', 0) > 0]
+
+    # Calculate metrics
+    total_trades = len(closed_trades)
+    total_wins = len(wins)
+    total_losses = len(losses)
+
+    avg_win = sum(t.get('pnl', 0) for t in wins) / len(wins) if wins else 0
+    avg_loss = sum(abs(t.get('pnl', 0)) for t in losses) / len(losses) if losses else 0
+
+    # Trade expectancy = (Win Rate × Avg Win) - (Loss Rate × Avg Loss)
+    win_rate = (total_wins / total_trades) * 100 if total_trades > 0 else 0
+    loss_rate = (total_losses / total_trades) * 100 if total_trades > 0 else 0
+    expectancy = (win_rate / 100 * avg_win) - (loss_rate / 100 * avg_loss)
+
+    # Long/Short performance
+    long_win_rate = (len(long_wins) / len(long_trades) * 100) if long_trades else 0
+    short_win_rate = (len(short_wins) / len(short_trades) * 100) if short_trades else 0
+
+    # Average duration
+    durations = [t.get('duration_minutes', 0) for t in closed_trades]
+    avg_duration = sum(durations) / len(durations) if durations else 0
+
+    # Consecutive wins/losses
+    max_consecutive_wins = 0
+    max_consecutive_losses = 0
+    current_streak = 0
+
+    for trade in closed_trades:
+        is_win = trade.get('pnl', 0) > 0
+        if is_win:
+            if current_streak > 0:
+                current_streak += 1
+            else:
+                current_streak = 1
+            max_consecutive_wins = max(max_consecutive_wins, current_streak)
+        else:
+            if current_streak < 0:
+                current_streak -= 1
+            else:
+                current_streak = -1
+            max_consecutive_losses = max(max_consecutive_losses, abs(current_streak))
+
+    # Best and worst trades
+    best_trade = max((t.get('pnl', 0) for t in closed_trades), default=0)
+    worst_trade = min((t.get('pnl', 0) for t in closed_trades), default=0)
+
+    # Get leverage from config (if available in trades)
+    leverage = closed_trades[0].get('leverage', 'N/A') if closed_trades else 'N/A'
+
+    # Risk/Reward ratio
+    rr_ratio = avg_win / avg_loss if avg_loss > 0 else 0
+
+    return {
+        'win_rate': win_rate,
+        'avg_win': avg_win,
+        'avg_loss': avg_loss,
+        'expectancy': expectancy,
+        'long_trades': len(long_trades),
+        'short_trades': len(short_trades),
+        'long_win_rate': long_win_rate,
+        'short_win_rate': short_win_rate,
+        'avg_duration': avg_duration,
+        'max_consecutive_wins': max_consecutive_wins,
+        'max_consecutive_losses': max_consecutive_losses,
+        'best_trade': best_trade,
+        'worst_trade': worst_trade,
+        'leverage': leverage,
+        'rr_ratio': rr_ratio
+    }
+
+
 def display_metrics(results):
-    """Display key performance metrics"""
+    """Display comprehensive performance metrics"""
     if not results or 'metrics' not in results:
         return
 
     metrics = results['metrics']
+    detailed = calculate_detailed_metrics(results)
 
-    st.subheader("📈 Session Metrics")
+    st.subheader("📈 Performance Overview")
 
+    # Row 1: Core Metrics
     col1, col2, col3, col4, col5 = st.columns(5)
 
     with col1:
@@ -213,6 +305,77 @@ def display_metrics(results):
     with col5:
         current_balance = metrics.get('current_balance', 0)
         st.metric("Balance", f"${current_balance:.2f}")
+
+    if detailed:
+        st.markdown("---")
+
+        # Row 2: Win/Loss Analysis
+        st.subheader("💰 Win/Loss Analysis")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            st.metric("Avg Win", f"${detailed['avg_win']:.2f}")
+
+        with col2:
+            st.metric("Avg Loss", f"${detailed['avg_loss']:.2f}")
+
+        with col3:
+            st.metric("Risk/Reward", f"1:{detailed['rr_ratio']:.2f}",
+                     delta="Good" if detailed['rr_ratio'] >= 1.5 else "Low")
+
+        with col4:
+            expectancy_color = "normal" if detailed['expectancy'] > 0 else "inverse"
+            st.metric("Expectancy", f"${detailed['expectancy']:+.2f}",
+                     delta="Positive" if detailed['expectancy'] > 0 else "Negative",
+                     delta_color=expectancy_color)
+
+        st.markdown("---")
+
+        # Row 3: Direction Bias & Streaks
+        st.subheader("📊 Direction Bias & Streaks")
+        col1, col2, col3, col4 = st.columns(4)
+
+        with col1:
+            long_bias = (detailed['long_trades'] / (detailed['long_trades'] + detailed['short_trades']) * 100) if (detailed['long_trades'] + detailed['short_trades']) > 0 else 0
+            st.metric("Long Trades", f"{detailed['long_trades']} ({long_bias:.0f}%)")
+
+        with col2:
+            st.metric("Long Win Rate", f"{detailed['long_win_rate']:.1f}%",
+                     delta="Good" if detailed['long_win_rate'] >= 50 else "Low")
+
+        with col3:
+            short_bias = (detailed['short_trades'] / (detailed['long_trades'] + detailed['short_trades']) * 100) if (detailed['long_trades'] + detailed['short_trades']) > 0 else 0
+            st.metric("Short Trades", f"{detailed['short_trades']} ({short_bias:.0f}%)")
+
+        with col4:
+            st.metric("Short Win Rate", f"{detailed['short_win_rate']:.1f}%",
+                     delta="Good" if detailed['short_win_rate'] >= 50 else "Low")
+
+        st.markdown("---")
+
+        # Row 4: Additional Metrics
+        st.subheader("📉 Trade Quality Metrics")
+        col1, col2, col3, col4, col5, col6 = st.columns(6)
+
+        with col1:
+            st.metric("Best Trade", f"${detailed['best_trade']:.2f}")
+
+        with col2:
+            st.metric("Worst Trade", f"${detailed['worst_trade']:.2f}")
+
+        with col3:
+            st.metric("Avg Duration", f"{int(detailed['avg_duration'])}m")
+
+        with col4:
+            st.metric("Max Win Streak", f"{detailed['max_consecutive_wins']}")
+
+        with col5:
+            st.metric("Max Loss Streak", f"{detailed['max_consecutive_losses']}",
+                     delta="Watch" if detailed['max_consecutive_losses'] >= 3 else None)
+
+        with col6:
+            leverage_display = f"{detailed['leverage']}×" if isinstance(detailed['leverage'], (int, float)) else str(detailed['leverage'])
+            st.metric("Leverage Used", leverage_display)
 
 
 def display_recent_trades(results, limit=10):
