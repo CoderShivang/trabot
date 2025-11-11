@@ -44,6 +44,7 @@ scoring:
 learning:
   min_labels_before_learning: 10
   learning_rate: 0.05
+  feedback_file: data/feedback.json
 notifications:
   discord:
     enabled: false
