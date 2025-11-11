@@ -225,7 +225,7 @@ class BacktestEngine:
         # Close any remaining open positions
         for symbol in list(self.positions.keys()):
             pos = self.positions[symbol]
-            await self._close_position(symbol, klines[-1][4], klines[-1][0], "backtest_end")
+            await self._close_position(symbol, float(klines[-1][4]), klines[-1][0], "backtest_end")
 
         # Calculate metrics
         metrics = self._calculate_metrics(start_date, end_date)
