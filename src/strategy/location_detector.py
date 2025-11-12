@@ -123,6 +123,9 @@ class LocationDetector:
         vwap_data = self._calculate_vwap_levels(klines) if klines else {}
         ema_data = self._calculate_ema_levels(klines) if klines else {}
 
+        # Get multi-timeframe S/R zones (5min and 15min)
+        mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
+
         return {
             'all_zones': final_zones,
             'at_location': at_location,
@@ -131,7 +134,8 @@ class LocationDetector:
             'vwap_15m': vwap_data.get('vwap'),
             'vwap_bands': vwap_data.get('bands'),
             'emas_15m': ema_data,
-            'sr_zones': final_zones  # For backward compatibility
+            'sr_zones': final_zones,  # For backward compatibility
+            'mtf_sr_zones': mtf_zones  # 5min and 15min S/R zones for mean reversion
         }
 
     async def _detect_frequency_based(self, symbol: str) -> List[SRZone]:
@@ -593,6 +597,97 @@ class LocationDetector:
                 break
 
         return at_location, best_zone, location_score
+
+    async def _detect_mtf_sr_zones(self, symbol: str, current_price: float) -> Dict:
+        """Detect S/R zones on 5min and 15min timeframes for mean reversion entries"""
+
+        mtf_zones = {
+            '5m': [],
+            '15m': []
+        }
+
+        if not self.config.clc_strategy.location.use_5min_sr and not self.config.clc_strategy.location.use_15min_sr:
+            return mtf_zones
+
+        lookback = self.config.clc_strategy.location.mtf_sr_lookback
+        min_touches = self.config.clc_strategy.location.mtf_sr_min_touches
+
+        # Detect 5min S/R zones
+        if self.config.clc_strategy.location.use_5min_sr:
+            klines_5m = await self.client.get_klines(symbol, '5m', lookback)
+            if klines_5m:
+                zones_5m = self._detect_sr_from_klines(klines_5m, min_touches, timeframe='5m')
+                mtf_zones['5m'] = zones_5m
+
+        # Detect 15min S/R zones
+        if self.config.clc_strategy.location.use_15min_sr:
+            klines_15m = await self.client.get_klines(symbol, '15m', lookback)
+            if klines_15m:
+                zones_15m = self._detect_sr_from_klines(klines_15m, min_touches, timeframe='15m')
+                mtf_zones['15m'] = zones_15m
+
+        return mtf_zones
+
+    def _detect_sr_from_klines(self, klines, min_touches: int, timeframe: str) -> List[SRZone]:
+        """Detect S/R zones from kline data (swing highs/lows with min touches)"""
+
+        df = self._klines_to_df(klines)
+        zones = []
+        window = 10  # Smaller window for faster timeframes
+
+        # Track touches for each level
+        level_touches = {}
+
+        # Find swing highs (resistance)
+        for i in range(window, len(df) - window):
+            if df['high'].iloc[i] == max(df['high'].iloc[i-window:i+window+1]):
+                level = float(df['high'].iloc[i])
+                level_key = round(level / 10) * 10  # Cluster nearby levels
+
+                if level_key not in level_touches:
+                    level_touches[level_key] = {'resistance': 0, 'support': 0, 'prices': []}
+
+                level_touches[level_key]['resistance'] += 1
+                level_touches[level_key]['prices'].append(level)
+
+        # Find swing lows (support)
+        for i in range(window, len(df) - window):
+            if df['low'].iloc[i] == min(df['low'].iloc[i-window:i+window+1]):
+                level = float(df['low'].iloc[i])
+                level_key = round(level / 10) * 10
+
+                if level_key not in level_touches:
+                    level_touches[level_key] = {'resistance': 0, 'support': 0, 'prices': []}
+
+                level_touches[level_key]['support'] += 1
+                level_touches[level_key]['prices'].append(level)
+
+        # Create zones from levels with min touches
+        for level_key, data in level_touches.items():
+            total_touches = data['resistance'] + data['support']
+
+            if total_touches >= min_touches:
+                avg_level = sum(data['prices']) / len(data['prices'])
+
+                # Determine zone type
+                if data['resistance'] > data['support']:
+                    zone_type = 'resistance'
+                elif data['support'] > data['resistance']:
+                    zone_type = 'support'
+                else:
+                    zone_type = 'both'
+
+                zones.append(SRZone(
+                    level=avg_level,
+                    zone_type=zone_type,
+                    strength=min(total_touches, 10),  # Cap at 10
+                    methods=[SRDetectionMethod.FREQUENCY],
+                    upper_bound=avg_level * 1.002,
+                    lower_bound=avg_level * 0.998,
+                    touches=total_touches
+                ))
+
+        return zones
 
     def _calculate_vwap_levels(self, klines) -> Dict:
         """Calculate VWAP and bands for additional context"""

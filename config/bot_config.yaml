@@ -2,15 +2,17 @@ trading:
   symbols: [BTCUSDT, ETHUSDT]
   position_size_usdt: 100.0
   max_positions: 2
-  leverage: 100
+  leverage: 50  # Reduced from 100x for better risk management
   taker_fee_bps: 5    # 0.05% Binance futures taker fee
-  maker_fee_bps: 2    # 0.02% Binance futures maker fee (for reference)
+  maker_fee_bps: 2    # 0.02% Binance futures maker fee
   paper_trading: true
-  min_time_between_trades_seconds: 900  # 15 minutes cooldown (reduced overtrading)
-  btc_risk_points: 140.0    # $140 stop loss for ~$20 risk with 100x leverage
-  btc_target_points: 280.0  # $280 take profit (2:1 R/R)
-  eth_risk_points: 15.0     # $15 stop loss distance for ETH
-  eth_target_points: 30.0   # $30 take profit for ETH (2:1 R/R)
+  min_time_between_trades_seconds: 900  # 15 minutes cooldown
+
+  # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
+  btc_risk_points: 150.0    # ~150-200 BTC points SL for $7-10 max loss
+  btc_target_points: 250.0  # ~200-300 BTC points TP for $10-15 target
+  eth_risk_points: 15.0     # ETH stop loss
+  eth_target_points: 30.0   # ETH take profit
 
 clc_strategy:
   context:
@@ -27,6 +29,12 @@ clc_strategy:
     sr_zone_size_pct: 0.003
     key_emas: [20,50,200]
     max_distance_from_level_pct: 0.01  # Increased from 0.005 to 0.01 (1% tolerance)
+
+    # Multi-timeframe S/R zones
+    use_5min_sr: true   # Use 5min S/R zones for mean reversion entries
+    use_15min_sr: true  # Use 15min S/R zones for mean reversion entries
+    mtf_sr_lookback: 200  # Bars to look back on 5m/15m for S/R detection
+    mtf_sr_min_touches: 2  # Min touches for 5m/15m S/R validity
   confirmation:
     min_signals_required: 0  # Set to 0 for backtesting (simulated orderbook limitation)
     imbalance_threshold: 0.55  # Lowered for simulated data (balanced orderbook ≈ 0.5)
@@ -41,11 +49,42 @@ clc_strategy:
     detect_icebergs: true
     iceberg_refill_threshold: 3
 risk:
-  max_daily_loss_usdt: 50.0   # Hard daily loss limit (you requested $50/day)
-  per_trade_max_loss_usdt: 20.0  # hard per-trade loss cap
+  max_daily_loss_usdt: 50.0   # Hard daily loss limit
+  per_trade_max_loss_usdt: 10.0  # Updated: $7-10 max loss per trade
   trailing_stop_enabled: true
   trailing_stop_activation: 100
   trailing_stop_distance: 50
+
+regime_detection:
+  # ADX - Average Directional Index for trend strength
+  adx_period: 14
+  adx_trending_threshold: 25  # ADX > 25 = trending market
+  adx_choppy_threshold: 20    # ADX < 20 = choppy/ranging market
+
+  # Bollinger Bands for volatility and range detection
+  bb_period: 20
+  bb_std_dev: 2.0
+  bb_squeeze_threshold: 0.015  # When BB width < 1.5% of price = tight range
+
+  # Range detection
+  range_detection_lookback: 100  # Bars to analyze for range
+  range_consolidation_threshold: 0.02  # Price staying within 2% = consolidation
+
+adaptive_exits:
+  # Trail winners past TP when trade is going strong
+  trail_past_tp: true
+  trail_activation_multiple: 1.2  # Start trailing when P&L > 1.2x target
+  trail_distance_pct: 0.005  # Trail by 0.5% from highest profit
+
+  # Exit losers early before full SL hit
+  early_exit_enabled: true
+  early_exit_time_threshold: 30  # If trade underwater after 30min
+  early_exit_loss_threshold: 0.5  # And losing > 50% of risk amount
+
+  # Partial profit taking
+  partial_tp_enabled: true
+  partial_tp_at_target: 0.5  # Take 50% profit at initial TP
+  partial_tp_percentage: 0.5  # Close 50% of position
 scoring:
   min_entry_score: 20.0  # Adjusted for new scoring system (max ~31 for perfect setup)
   context_weight: 0.25      # 25% weight for trend/bias context

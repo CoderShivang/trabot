@@ -62,6 +62,7 @@ class CLCEngine:
 
         # DEBUG: Log entry parameters
         logger.debug(f"[CLC] Evaluating {direction} @ price={current_price:.2f}, vwap={ctx.vwap:.2f}, ema50={ctx.ema50:.2f}, ema200={ctx.ema200:.2f}")
+        logger.info(f"[REGIME] Market regime: {ctx.regime.upper()} (ADX={ctx.adx:.1f})")
 
         # NEW APPROACH: Calculate bullish and bearish signals, then score based on direction
         # This ensures LONG and SHORT never get the same scores in the same market conditions
@@ -89,19 +90,65 @@ class CLCEngine:
             bias_votes -= 1
             reasons.append("EMA50 < EMA200 (bearish)")
 
-        # Score based on direction alignment with market conditions
-        if direction == "LONG":
-            score_ctx = bullish_score
-            # Penalize counter-trend LONGs heavily
-            if bearish_score > bullish_score:
-                score_ctx *= 0.3
-                reasons.append("LONG counter-trend penalty")
-        else:  # SHORT
-            score_ctx = bearish_score
-            # Penalize counter-trend SHORTs heavily
-            if bullish_score > bearish_score:
-                score_ctx *= 0.3
-                reasons.append("SHORT counter-trend penalty")
+        # ADAPTIVE SCORING BASED ON MARKET REGIME
+        # Trending market: Use trend-following logic
+        # Choppy/Ranging market: Use mean reversion logic
+
+        if ctx.regime == "trending":
+            # TREND-FOLLOWING MODE: Align with trend direction
+            reasons.append(f"Regime: TRENDING (ADX={ctx.adx:.1f})")
+
+            if direction == "LONG":
+                score_ctx = bullish_score
+                # Penalize counter-trend LONGs heavily
+                if bearish_score > bullish_score:
+                    score_ctx *= 0.3
+                    reasons.append("LONG counter-trend penalty")
+            else:  # SHORT
+                score_ctx = bearish_score
+                # Penalize counter-trend SHORTs heavily
+                if bullish_score > bearish_score:
+                    score_ctx *= 0.3
+                    reasons.append("SHORT counter-trend penalty")
+
+        elif ctx.regime in ["choppy", "ranging"]:
+            # MEAN REVERSION MODE: Trade range boundaries
+            reasons.append(f"Regime: {ctx.regime.upper()} - Mean reversion mode")
+
+            # Check if price is near range boundaries
+            near_range_high = False
+            near_range_low = False
+
+            if ctx.range_high > 0 and ctx.range_low > 0:
+                range_size = ctx.range_high - ctx.range_low
+                high_threshold = ctx.range_high - (range_size * 0.1)  # Within 10% of range high
+                low_threshold = ctx.range_low + (range_size * 0.1)   # Within 10% of range low
+
+                if current_price >= high_threshold:
+                    near_range_high = True
+                    reasons.append(f"Near range high: {ctx.range_high:.2f}")
+                elif current_price <= low_threshold:
+                    near_range_low = True
+                    reasons.append(f"Near range low: {ctx.range_low:.2f}")
+
+            # Mean reversion scoring: SHORT at range high, LONG at range low
+            if direction == "SHORT" and near_range_high:
+                score_ctx = 50.0  # High score for shorting at range high
+                reasons.append("Mean reversion SHORT at range high")
+            elif direction == "LONG" and near_range_low:
+                score_ctx = 50.0  # High score for buying at range low
+                reasons.append("Mean reversion LONG at range low")
+            else:
+                # Not at a range boundary - skip trade
+                score_ctx = 0.0
+                reasons.append(f"Skip: Not at range boundary ({direction} needs {'high' if direction == 'SHORT' else 'low'})")
+
+        else:
+            # Unknown regime - use default trending logic
+            if direction == "LONG":
+                score_ctx = bullish_score
+            else:
+                score_ctx = bearish_score
 
         logger.debug(f"[CLC] {direction}: bullish={bullish_score}, bearish={bearish_score}, final_ctx={score_ctx:.1f}")
 
@@ -116,6 +163,8 @@ class CLCEngine:
         at_location = False; loc_type=None; score_loc=0.0; loc_reasons=[]
         sr_zones = locations.get('sr_zones', [])
         max_dist = self.config.clc_strategy.location.get('max_distance_from_level_pct', 0.005) if isinstance(self.config.clc_strategy.location, dict) else 0.005
+
+        # Check main S/R zones
         for z in sr_zones:
             # SRZone is a dataclass, access attributes not dict keys
             dist = abs(current_price - z.level)/current_price
@@ -123,8 +172,32 @@ class CLCEngine:
                 at_location = True
                 score_loc += 40 * (z.strength / 10.0)  # Normalize strength (0-10) to weight (0-1)
                 loc_type = LocationType.SR_ZONE
-                loc_reasons.append(f"At SR {z.level}")
+                loc_reasons.append(f"At SR {z.level:.2f}")
                 break
+
+        # Check 5min and 15min S/R zones (for mean reversion in choppy markets)
+        mtf_zones = locations.get('mtf_sr_zones', {})
+
+        # 5min S/R zones
+        zones_5m = mtf_zones.get('5m', [])
+        for z in zones_5m:
+            dist = abs(current_price - z.level)/current_price
+            if dist <= max_dist * 1.5:  # Slightly wider tolerance for faster timeframes
+                at_location = True
+                score_loc += 20 * (z.strength / 10.0)
+                loc_reasons.append(f"At 5m SR {z.level:.2f}")
+                break
+
+        # 15min S/R zones
+        zones_15m = mtf_zones.get('15m', [])
+        for z in zones_15m:
+            dist = abs(current_price - z.level)/current_price
+            if dist <= max_dist * 1.2:
+                at_location = True
+                score_loc += 25 * (z.strength / 10.0)
+                loc_reasons.append(f"At 15m SR {z.level:.2f}")
+                break
+
         # VWAP bands
         vwap = locations.get('vwap_15m')
         if vwap:
@@ -133,7 +206,7 @@ class CLCEngine:
                 at_location = True
                 score_loc += 15
                 loc_type = LocationType.VWAP_BAND
-                loc_reasons.append("At VWAP 15m")
+                loc_reasons.append(f"At VWAP 15m: {vwap:.2f}")
 
         # 3) confirmation
         conf = self.confirmation_analyzer.analyze(symbol, orderbook, recent_trades)
