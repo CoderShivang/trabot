@@ -229,10 +229,13 @@ class BacktestEngine:
         klines = self.klines_cache[symbol][timeframe]
         logger.info(f"[BACKTEST] Loaded {len(klines)} candles")
 
-        # PRE-CALCULATE INDICATORS for massive speedup
-        logger.info(f"[BACKTEST] Pre-calculating indicators for {len(klines)} candles (one-time cost)...")
-        self._precalculate_indicators(symbol, klines)
-        logger.info(f"[BACKTEST] ✓ Indicators pre-calculated! Backtest will now run 10-20x faster.")
+        # PRE-CALCULATE INDICATORS for massive speedup (CRITICAL: use 1h timeframe, not 1m!)
+        if symbol in self.klines_cache and '1h' in self.klines_cache[symbol]:
+            logger.info(f"[BACKTEST] Pre-calculating indicators for 1h candles (one-time cost)...")
+            self._precalculate_indicators(symbol, self.klines_cache[symbol]['1h'])
+            logger.info(f"[BACKTEST] [OK] Indicators pre-calculated! Backtest will now run 10-20x faster.")
+        else:
+            logger.warning(f"[BACKTEST] No 1h klines found, skipping indicator pre-calculation")
 
         # Iterate through each candle
         total_candles = len(klines)
@@ -301,8 +304,9 @@ class BacktestEngine:
                 await self._evaluate_entry(symbol, close_price, timestamp, i, klines)
                 logger.debug(f"[BACKTEST] Completed evaluation for candle {i}")
 
-            # Record equity
-            self.equity_curve.append((timestamp, self.current_balance))
+            # Record equity (sample every 50 candles to reduce memory usage and improve performance)
+            if i % 50 == 0 or i == total_candles - 1:
+                self.equity_curve.append((timestamp, self.current_balance))
 
         # Re-enable logging and print newline after progress bar
         logging_module.disable(logging_module.NOTSET)
@@ -372,7 +376,7 @@ class BacktestEngine:
 
         # Inject cache into binance_client
         self.binance_client.set_backtest_cache(self.klines_cache)
-        logger.info("[BACKTEST] ✓ Cached data loaded successfully")
+        logger.info("[BACKTEST] [OK] Cached data loaded successfully")
 
     def _save_data_cache(
         self,
@@ -410,7 +414,7 @@ class BacktestEngine:
         with open(cache_path, 'w') as f:
             json.dump(cache_data, f)
 
-        logger.info(f"[BACKTEST] ✓ Data cached successfully! Next run will be 50-100x faster.")
+        logger.info(f"[BACKTEST] [OK] Data cached successfully! Next run will be 50-100x faster.")
         logger.info(f"[BACKTEST] Cache file: {cache_path}")
 
     async def _load_historical_data(
