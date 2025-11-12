@@ -47,6 +47,7 @@ class BacktestPosition:
     lowest_price: float = float('inf')
     partial_exits: List[Dict] = field(default_factory=list)
     remaining_quantity: float = 0.0
+    trailing_active: bool = False  # Track if aggressive trailing is active
 
     def __post_init__(self):
         self.remaining_quantity = self.quantity
@@ -573,7 +574,7 @@ class BacktestEngine:
         # Calculate position size with leverage
         leverage = self.config.trading.leverage
         initial_margin = self.config.trading.position_size_usdt  # e.g., $100
-        notional_value = initial_margin * leverage  # e.g., $100 * 100 = $10,000
+        notional_value = initial_margin * leverage  # e.g., $100 * 50 = $5,000
 
         # Quantity in BTC (or ETH)
         quantity = notional_value / entry_price
@@ -594,6 +595,40 @@ class BacktestEngine:
             stop_loss = entry_price + risk_points
             take_profit = entry_price - target_points
 
+        # Get current market context for detailed logging
+        ctx = await self.context_analyzer.get_context(symbol, "1h", entry_price)
+        locations = await self.location_detector.get_all_locations(symbol, entry_price)
+
+        # Store enhanced CLC score with market context
+        enhanced_clc = clc_score.__dict__ if hasattr(clc_score, '__dict__') else {}
+        enhanced_clc['market_context'] = {
+            'regime': ctx.regime,
+            'adx': ctx.adx,
+            'vwap': ctx.vwap,
+            'ema20': ctx.ema20,
+            'ema50': ctx.ema50,
+            'ema200': ctx.ema200,
+            'bb_upper': ctx.bb_upper,
+            'bb_lower': ctx.bb_lower,
+            'range_high': ctx.range_high,
+            'range_low': ctx.range_low
+        }
+
+        # Find nearby S/R zones
+        nearby_sr = []
+        sr_zones = locations.get('sr_zones', [])
+        for zone in sr_zones[:3]:  # Top 3 zones
+            dist_pct = abs(entry_price - zone.level) / entry_price * 100
+            if dist_pct < 2.0:  # Within 2%
+                nearby_sr.append({
+                    'level': zone.level,
+                    'type': zone.zone_type,
+                    'distance_pct': dist_pct,
+                    'strength': zone.strength
+                })
+
+        enhanced_clc['nearby_sr_zones'] = nearby_sr
+
         # Create position
         position = BacktestPosition(
             symbol=symbol,
@@ -603,7 +638,7 @@ class BacktestEngine:
             quantity=quantity,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            clc_score=clc_score.__dict__ if hasattr(clc_score, '__dict__') else {},
+            clc_score=enhanced_clc,
             current_price=entry_price
         )
 
@@ -658,18 +693,89 @@ class BacktestEngine:
                 exit_reason = "take_profit"
                 exit_price = pos.take_profit
 
-        # Check for trailing stop (if enabled)
-        if self.config.risk.trailing_stop_enabled and exit_reason is None:
+        # ADAPTIVE EXIT LOGIC
+        if exit_reason is None:
             unrealized_pnl = self._calculate_unrealized_pnl(pos, close_price)
+            trade_duration_minutes = (timestamp - pos.entry_time) / 60000
 
-            if unrealized_pnl >= self.config.risk.trailing_stop_activation:
-                # Activate trailing stop
-                if pos.direction == "LONG":
-                    trail_stop = pos.highest_price - self.config.risk.trailing_stop_distance
-                    pos.stop_loss = max(pos.stop_loss, trail_stop)
+            # 1) EARLY EXIT: Cut losers early before full SL hit
+            if hasattr(self.config, 'adaptive_exits') and self.config.adaptive_exits.early_exit_enabled:
+                threshold_time = self.config.adaptive_exits.early_exit_time_threshold
+                loss_threshold = self.config.adaptive_exits.early_exit_loss_threshold
+
+                # Calculate max acceptable loss (based on risk amount)
+                if symbol.startswith("BTC"):
+                    max_risk = self.config.trading.btc_risk_points * pos.quantity
                 else:
-                    trail_stop = pos.lowest_price + self.config.risk.trailing_stop_distance
-                    pos.stop_loss = min(pos.stop_loss, trail_stop)
+                    max_risk = self.config.trading.eth_risk_points * pos.quantity
+
+                # If losing > 50% of risk after 30 minutes, exit early
+                if trade_duration_minutes > threshold_time and unrealized_pnl < -(max_risk * loss_threshold):
+                    exit_reason = "early_exit_loss"
+                    exit_price = close_price
+                    logger.info(f"[BACKTEST] Early exit triggered: {unrealized_pnl:.2f} loss after {trade_duration_minutes:.1f}min")
+
+            # 2) PARTIAL PROFIT TAKING: Take 50% profit at TP, trail the rest
+            if hasattr(self.config, 'adaptive_exits') and self.config.adaptive_exits.partial_tp_enabled:
+                partial_at_target = self.config.adaptive_exits.partial_tp_at_target
+                partial_percentage = self.config.adaptive_exits.partial_tp_percentage
+
+                # Calculate target profit (in dollars)
+                if symbol.startswith("BTC"):
+                    target_profit = self.config.trading.btc_target_points * pos.quantity
+                else:
+                    target_profit = self.config.trading.eth_target_points * pos.quantity
+
+                # If profit >= target and haven't taken partial yet
+                if unrealized_pnl >= (target_profit * partial_at_target) and pos.remaining_quantity == pos.quantity:
+                    # Take partial profit
+                    partial_qty = pos.quantity * partial_percentage
+                    pos.remaining_quantity = pos.quantity - partial_qty
+
+                    logger.info(f"[BACKTEST] Partial TP: Closed {partial_percentage*100}% at ${close_price:.2f}, P&L: +${unrealized_pnl*partial_percentage:.2f}")
+
+                    # Now activate aggressive trailing for remaining position
+                    pos.trailing_active = True
+
+            # 3) ADAPTIVE TRAILING: Trail winners past TP
+            if hasattr(self.config, 'adaptive_exits') and self.config.adaptive_exits.trail_past_tp:
+                activation_multiple = self.config.adaptive_exits.trail_activation_multiple
+                trail_distance_pct = self.config.adaptive_exits.trail_distance_pct
+
+                # Calculate target profit
+                if symbol.startswith("BTC"):
+                    target_profit = self.config.trading.btc_target_points * pos.quantity
+                else:
+                    target_profit = self.config.trading.eth_target_points * pos.quantity
+
+                # If profit > 1.2x target, start trailing aggressively
+                if unrealized_pnl >= (target_profit * activation_multiple):
+                    trail_distance = close_price * trail_distance_pct
+
+                    if pos.direction == "LONG":
+                        new_stop = pos.highest_price - trail_distance
+                        pos.stop_loss = max(pos.stop_loss, new_stop)
+                    else:
+                        new_stop = pos.lowest_price + trail_distance
+                        pos.stop_loss = min(pos.stop_loss, new_stop)
+
+                    # Check if trailing stop hit
+                    if pos.direction == "LONG" and low_price <= pos.stop_loss:
+                        exit_reason = "trailing_stop"
+                        exit_price = pos.stop_loss
+                    elif pos.direction == "SHORT" and high_price >= pos.stop_loss:
+                        exit_reason = "trailing_stop"
+                        exit_price = pos.stop_loss
+
+            # 4) STANDARD TRAILING STOP (original logic)
+            elif self.config.risk.trailing_stop_enabled:
+                if unrealized_pnl >= self.config.risk.trailing_stop_activation:
+                    if pos.direction == "LONG":
+                        trail_stop = pos.highest_price - self.config.risk.trailing_stop_distance
+                        pos.stop_loss = max(pos.stop_loss, trail_stop)
+                    else:
+                        trail_stop = pos.lowest_price + self.config.risk.trailing_stop_distance
+                        pos.stop_loss = min(pos.stop_loss, trail_stop)
 
         # Close position if exit triggered
         if exit_reason:
