@@ -233,13 +233,23 @@ class BacktestEngine:
         import sys
         import logging as logging_module
 
-        # Suppress logs from all modules during backtest
-        logging_module.getLogger('src.strategy.location_detector').setLevel(logging_module.ERROR)
-        logging_module.getLogger('src.strategy.context_analyzer').setLevel(logging_module.ERROR)
-        logging_module.getLogger('src.strategy.clc_engine').setLevel(logging_module.ERROR)
-        logging_module.getLogger('src.data.binance_client').setLevel(logging_module.ERROR)
-        original_log_level = logger.level
-        logger.setLevel(logging_module.ERROR)  # Only show errors during backtest
+        # Suppress console output by setting all StreamHandlers to ERROR level
+        # This prevents DEBUG/INFO logs from appearing in terminal during backtest
+        original_handler_levels = []
+
+        for name in logging_module.Logger.manager.loggerDict:
+            log = logging_module.getLogger(name)
+            for handler in log.handlers:
+                if isinstance(handler, logging_module.StreamHandler) and not isinstance(handler, logging_module.FileHandler):
+                    original_handler_levels.append((handler, handler.level))
+                    handler.setLevel(logging_module.ERROR)
+
+        # Also check root logger handlers
+        root_logger = logging_module.getLogger()
+        for handler in root_logger.handlers:
+            if isinstance(handler, logging_module.StreamHandler) and not isinstance(handler, logging_module.FileHandler):
+                original_handler_levels.append((handler, handler.level))
+                handler.setLevel(logging_module.ERROR)
 
         # Progress bar setup
         start_time = datetime.now(timezone.utc)
@@ -285,8 +295,10 @@ class BacktestEngine:
             # Record equity
             self.equity_curve.append((timestamp, self.current_balance))
 
-        # Restore logger level and print newline after progress bar
-        logger.setLevel(original_log_level)
+        # Restore handler levels and print newline after progress bar
+        for handler, level in original_handler_levels:
+            handler.setLevel(level)
+
         sys.stdout.write("\n")
         sys.stdout.flush()
 
