@@ -122,50 +122,75 @@ class LocationDetector:
         all_zones = []
 
         # Method 1: Frequency-based (swing highs/lows)
+        logger.info(f"[LOCATION] Starting Method 1: Frequency-based detection for {symbol}")
         freq_zones = await self._detect_frequency_based(symbol)
+        logger.info(f"[LOCATION] Method 1 complete: {len(freq_zones)} frequency zones detected")
         all_zones.extend(freq_zones)
 
         # Method 2: Volume Profile (high volume nodes)
+        logger.info(f"[LOCATION] Starting Method 2: Volume Profile detection for {symbol}")
         volume_zones = await self._detect_volume_profile(symbol)
+        logger.info(f"[LOCATION] Method 2 complete: {len(volume_zones)} volume zones detected")
         all_zones.extend(volume_zones)
 
         # Method 3: Liquidity Heatmap (stop clusters)
+        logger.info(f"[LOCATION] Starting Method 3: Liquidity Heatmap detection for {symbol}")
         liquidity_zones = await self._detect_liquidity_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 3 complete: {len(liquidity_zones)} liquidity zones detected")
         all_zones.extend(liquidity_zones)
 
         # Method 4: Fibonacci retracements
+        logger.info(f"[LOCATION] Starting Method 4: Fibonacci detection for {symbol}")
         fib_zones = await self._detect_fibonacci_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 4 complete: {len(fib_zones)} fibonacci zones detected")
         all_zones.extend(fib_zones)
 
         # Method 5: Psychological levels (round numbers)
+        logger.info(f"[LOCATION] Starting Method 5: Psychological levels detection for {symbol}")
         psych_zones = self._detect_psychological_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 5 complete: {len(psych_zones)} psychological zones detected")
         all_zones.extend(psych_zones)
 
         # Method 6: Manual zones (human-marked)
+        logger.info(f"[LOCATION] Starting Method 6: Manual zones detection for {symbol}")
         manual_zones = self._get_manual_zones(symbol, current_price)
+        logger.info(f"[LOCATION] Method 6 complete: {len(manual_zones)} manual zones detected")
         all_zones.extend(manual_zones)
 
         # Consolidate overlapping zones
+        logger.info(f"[LOCATION] Starting zone consolidation for {symbol}")
         consolidated = self._consolidate_zones(all_zones, current_price)
+        logger.info(f"[LOCATION] Zone consolidation complete: {len(consolidated)} consolidated zones")
 
         # Score by confluence (how many methods detected it)
+        logger.info(f"[LOCATION] Starting confluence scoring for {symbol}")
         scored_zones = self._score_zones_by_confluence(consolidated)
+        logger.info(f"[LOCATION] Confluence scoring complete")
 
         # Apply human feedback weights
+        logger.info(f"[LOCATION] Applying human feedback weights for {symbol}")
         final_zones = self._apply_human_feedback_weights(scored_zones, symbol)
+        logger.info(f"[LOCATION] Human feedback weights applied")
 
         # Check if current price is at a zone
+        logger.info(f"[LOCATION] Checking if price ${current_price:.2f} is at a zone")
         at_location, best_zone, location_score = self._check_at_location(
             final_zones, current_price
         )
+        logger.info(f"[LOCATION] Location check complete: at_location={at_location}, score={location_score:.1f}")
 
         # Also get VWAP and EMA levels for additional context
+        logger.info(f"[LOCATION] Fetching 15m klines for VWAP/EMA calculation")
         klines = await self._get_klines(symbol, '15m', 200)
+        logger.info(f"[LOCATION] Calculating VWAP and EMA levels")
         vwap_data = self._calculate_vwap_levels(klines) if klines else {}
         ema_data = self._calculate_ema_levels(klines) if klines else {}
+        logger.info(f"[LOCATION] VWAP/EMA calculation complete")
 
         # Get multi-timeframe S/R zones (5min and 15min)
+        logger.info(f"[LOCATION] Detecting multi-timeframe S/R zones for {symbol}")
         mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
+        logger.info(f"[LOCATION] Multi-timeframe S/R detection complete")
 
         result = {
             'all_zones': final_zones,
