@@ -431,8 +431,7 @@ class BacktestEngine:
             # Simulate recent trades from recent candles
             recent_trades = self._simulate_trades(symbol, klines, candle_index)
 
-            # Update detectors
-            self.big_orders_detector.update_trade_history(symbol, recent_trades)
+            # Update detectors (trade history is updated inside analyze(), no need to call explicitly)
             self.big_orders_detector.update_orderbook_snapshot(symbol, orderbook)
 
             # Evaluate LONG and SHORT
