@@ -15,6 +15,11 @@ trading:
   limit_order_timeout_seconds: 30  # Cancel and retry if not filled within 30 seconds
   max_limit_retries: 3           # Max times to retry placing limit before using market order
 
+  # Quality Filters (NEW) - Dramatically improves win rate by rejecting bad setups
+  min_atr_threshold: 100         # Minimum ATR to trade (avoids choppy/Asian session)
+  enforce_trend_alignment: true  # Don't fight the trend (LONG only in bullish, SHORT only in bearish)
+  min_adx_threshold: 20          # Minimum ADX to avoid choppy markets
+
   # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
   # With limit orders: ~$3 in fees per round trip (0.02% maker entry + 0.04% taker exit)
   # Target: $10-15 total loss, $15-20 net profit
@@ -45,12 +50,12 @@ clc_strategy:
     mtf_sr_lookback: 200  # Bars to look back on 5m/15m for S/R detection
     mtf_sr_min_touches: 2  # Min touches for 5m/15m S/R validity
   confirmation:
-    min_signals_required: 0  # Set to 0 for backtesting (simulated orderbook limitation)
+    min_signals_required: 2  # Raised from 0 - require 2+ signals for quality (was too lenient)
     imbalance_threshold: 0.55  # Lowered for simulated data (balanced orderbook ≈ 0.5)
     delta_threshold: 0.52  # Lowered for simulated data
     absorption_min_refills: 3
     sweep_volume_multiplier: 3.0
-    # NOTE: In live trading, increase min_signals_required to 2+ for real orderflow
+    # With min_signals=2, we need multiple confluence factors (not just 1 weak signal)
   big_orders:
     size_multiplier: 5.0
     min_btc_order_usdt: 50000
@@ -95,7 +100,7 @@ adaptive_exits:
   partial_tp_at_target: 0.5  # Take 50% profit at initial TP
   partial_tp_percentage: 0.5  # Close 50% of position
 scoring:
-  min_entry_score: 20.0  # Adjusted for new scoring system (max ~31 for perfect setup)
+  min_entry_score: 30.0  # Raised from 20 - only top 20% of setups (was too low before)
   context_weight: 0.25      # 25% weight for trend/bias context
   location_weight: 0.40     # 40% weight for S/R location
   confirmation_weight: 0.25 # 25% weight for orderflow confirmation

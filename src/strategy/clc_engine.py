@@ -58,11 +58,45 @@ class CLCEngine:
         bias = ContextBias.NEUTRAL
         score_ctx = 0.0
         reasons = []
+        warnings = []
         bias_votes = 0
 
         # DEBUG: Log entry parameters
         logger.debug(f"[CLC] Evaluating {direction} @ price={current_price:.2f}, vwap={ctx.vwap:.2f}, ema50={ctx.ema50:.2f}, ema200={ctx.ema200:.2f}")
         logger.info(f"[REGIME] Market regime: {ctx.regime.upper()} (ADX={ctx.adx:.1f})")
+        logger.info(f"[TREND] Trend direction: {ctx.trend_direction.upper()} | Price above EMA200: {ctx.price_above_ema200} | EMA50 above EMA200: {ctx.ema50_above_ema200}")
+
+        # ===== NEW: QUALITY FILTERS =====
+        # These reject low-quality setups before scoring
+
+        # Filter 1: Trend Alignment (CRITICAL!)
+        # Don't fight the trend - only LONG in bullish trends, SHORT in bearish trends
+        if ctx.trend_direction == "bullish" and direction == "SHORT":
+            warnings.append("⚠️ REJECTED: Trying to SHORT a BULLISH trend!")
+            logger.warning(f"[CLC] REJECTED {direction}: Market is {ctx.trend_direction}, don't fight the trend!")
+            return self._create_reject_score("Fighting bullish trend")
+
+        if ctx.trend_direction == "bearish" and direction == "LONG":
+            warnings.append("⚠️ REJECTED: Trying to LONG a BEARISH trend!")
+            logger.warning(f"[CLC] REJECTED {direction}: Market is {ctx.trend_direction}, don't fight the trend!")
+            return self._create_reject_score("Fighting bearish trend")
+
+        # Filter 2: ATR Volatility Check
+        # Don't trade when volatility is too low (choppy/Asian session)
+        min_atr = getattr(self.config.trading, 'min_atr_threshold', 80)
+        if ctx.atr < min_atr:
+            warnings.append(f"⚠️ REJECTED: ATR too low ({ctx.atr:.1f} < {min_atr})")
+            logger.warning(f"[CLC] REJECTED {direction}: ATR {ctx.atr:.1f} below minimum {min_atr}")
+            return self._create_reject_score(f"ATR too low ({ctx.atr:.1f})")
+
+        # Filter 3: Avoid Choppy Markets
+        # If ADX < 20, market is choppy - don't trade
+        if ctx.adx < 20:
+            warnings.append(f"⚠️ REJECTED: Market too choppy (ADX={ctx.adx:.1f})")
+            logger.warning(f"[CLC] REJECTED {direction}: Market choppy (ADX={ctx.adx:.1f})")
+            return self._create_reject_score(f"Choppy market (ADX={ctx.adx:.1f})")
+
+        logger.info(f"[CLC] ✅ Quality filters passed: Trend={ctx.trend_direction}, ATR={ctx.atr:.1f}, ADX={ctx.adx:.1f}")
 
         # NEW APPROACH: Calculate bullish and bearish signals, then score based on direction
         # This ensures LONG and SHORT never get the same scores in the same market conditions
@@ -283,4 +317,21 @@ class CLCEngine:
             clc.warnings.append("counter-trend penalty applied")
 
         return clc
+
+    def _create_reject_score(self, reason: str) -> CLCScore:
+        """Create a rejection score (0 score) with reason"""
+        return CLCScore(
+            total_score=0.0,
+            context_score=0.0,
+            location_score=0.0,
+            confirmation_score=0.0,
+            big_orders_score=0.0,
+            context_bias=ContextBias.NEUTRAL,
+            at_location=False,
+            location_type=None,
+            confirmation_signals=[],
+            big_orders_detected=[],
+            reasons=[f"REJECTED: {reason}"],
+            warnings=[f"Trade rejected: {reason}"]
+        )
 

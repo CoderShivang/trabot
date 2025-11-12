@@ -268,13 +268,15 @@ class BacktestEngine:
         # Generate interactive HTML dashboard
         if self.closed_trades:
             logger.info(f"[BACKTEST] Generating interactive dashboard for {len(self.closed_trades)} trades...")
+            # Pass klines cache to dashboard for chart generation
+            self.trade_dashboard.klines_cache = self.klines_cache
             dashboard_path = await self.trade_dashboard.generate_dashboard(
                 trades=self.closed_trades,
                 metrics=metrics,
                 start_date=start_date,
                 end_date=end_date
             )
-            logger.info(f"[BACKTEST] ✅ Dashboard ready! Open: {dashboard_path}")
+            logger.info(f"[BACKTEST] Dashboard ready! Open: {dashboard_path}")
 
         return metrics
 

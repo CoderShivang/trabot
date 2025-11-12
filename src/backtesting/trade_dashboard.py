@@ -16,9 +16,10 @@ logger = setup_logger(__name__)
 
 
 class TradeDashboard:
-    def __init__(self, config, binance_client):
+    def __init__(self, config, binance_client, klines_cache=None):
         self.config = config
         self.client = binance_client
+        self.klines_cache = klines_cache or {}  # Store cached klines from backtest
         self.output_dir = Path("backtest_results")
         self.output_dir.mkdir(exist_ok=True)
 
@@ -571,19 +572,30 @@ class TradeDashboard:
             exit_time = trade.get('exit_time')
             direction = trade['direction']
 
-            # Fetch klines data (4 hours around entry)
-            lookback_ms = 2 * 60 * 60 * 1000  # 2 hours
-            lookahead_ms = 2 * 60 * 60 * 1000  # 2 hours
-            start_time = entry_time - lookback_ms
-            end_time = entry_time + lookahead_ms
+            # Get cached klines from backtest
+            if symbol not in self.klines_cache or '1m' not in self.klines_cache[symbol]:
+                return "<p>No cached data available for chart</p>"
 
-            klines = await self.client.get_klines(
-                symbol=symbol,
-                interval='1m',
-                limit=240,
-                start_time=start_time,
-                end_time=end_time
-            )
+            all_klines = self.klines_cache[symbol]['1m']
+
+            # Extract 4 hours around entry (2 hours before/after)
+            lookback_candles = 120  # 2 hours in 1m candles
+            lookahead_candles = 120  # 2 hours in 1m candles
+
+            # Find entry candle index
+            entry_idx = None
+            for idx, kline in enumerate(all_klines):
+                if int(kline[0]) >= entry_time:
+                    entry_idx = idx
+                    break
+
+            if entry_idx is None:
+                return "<p>Entry time not found in cached data</p>"
+
+            # Extract window around entry
+            start_idx = max(0, entry_idx - lookback_candles)
+            end_idx = min(len(all_klines), entry_idx + lookahead_candles)
+            klines = all_klines[start_idx:end_idx]
 
             if not klines or len(klines) < 20:
                 return "<p>Insufficient data for chart</p>"

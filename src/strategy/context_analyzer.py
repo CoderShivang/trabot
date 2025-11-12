@@ -33,6 +33,11 @@ class MarketContext:
     range_high: float = 0.0  # Range boundary high (if in range mode)
     range_low: float = 0.0   # Range boundary low (if in range mode)
 
+    # Trend direction (NEW)
+    trend_direction: str = "neutral"  # "bullish", "bearish", "neutral"
+    price_above_ema200: bool = False
+    ema50_above_ema200: bool = False
+
 class ContextAnalyzer:
     def __init__(self, config, binance_client):
         self.config = config
@@ -64,6 +69,20 @@ class ContextAnalyzer:
         # Classify market regime
         regime, range_high, range_low = self._classify_regime(df, adx, bb_width_pct, current_price)
 
+        # Determine trend direction (NEW)
+        price_above_ema200 = current_price > ema200
+        ema50_above_ema200 = ema50 > ema200
+
+        # Strong bullish: price > EMA200 AND EMA50 > EMA200
+        # Strong bearish: price < EMA200 AND EMA50 < EMA200
+        # Neutral: mixed signals
+        if price_above_ema200 and ema50_above_ema200:
+            trend_direction = "bullish"
+        elif not price_above_ema200 and not ema50_above_ema200:
+            trend_direction = "bearish"
+        else:
+            trend_direction = "neutral"
+
         return MarketContext(
             symbol=symbol,
             current_price=current_price,
@@ -80,7 +99,10 @@ class ContextAnalyzer:
             bb_width_pct=bb_width_pct,
             regime=regime,
             range_high=range_high,
-            range_low=range_low
+            range_low=range_low,
+            trend_direction=trend_direction,
+            price_above_ema200=price_above_ema200,
+            ema50_above_ema200=ema50_above_ema200
         )
 
     def _vwap(self, df: pd.DataFrame) -> float:
