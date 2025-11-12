@@ -227,6 +227,7 @@ class BacktestEngine:
 
         # Iterate through each candle
         total_candles = len(klines)
+        logger.info(f"[BACKTEST] Starting main evaluation loop for {total_candles} candles...")
         for i, kline in enumerate(klines):
             if i % 100 == 0:
                 progress = (i / total_candles) * 100
@@ -251,6 +252,7 @@ class BacktestEngine:
             # Check for new entry signals (use close price)
             if self._can_open_position(symbol, timestamp):
                 await self._evaluate_entry(symbol, close_price, timestamp, i, klines)
+                logger.debug(f"[BACKTEST] Completed evaluation for candle {i}")
 
             # Record equity
             self.equity_curve.append((timestamp, self.current_balance))
