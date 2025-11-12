@@ -28,6 +28,22 @@ logger = setup_logger(__name__)
 
 
 @dataclass
+class PendingLimitOrder:
+    """Pending limit order waiting to be filled"""
+    symbol: str
+    direction: str
+    limit_price: float
+    market_price: float  # Price when order was placed
+    order_time: int
+    quantity: float
+    stop_loss: float
+    take_profit: float
+    clc_score: Dict
+    retry_count: int = 0
+    order_type: str = "limit"  # 'limit' or 'market' (after timeout)
+
+
+@dataclass
 class BacktestPosition:
     """Simulated position for backtesting"""
     symbol: str
@@ -49,6 +65,7 @@ class BacktestPosition:
     partial_exits: List[Dict] = field(default_factory=list)
     remaining_quantity: float = 0.0
     trailing_active: bool = False  # Track if aggressive trailing is active
+    used_limit_order: bool = False  # Track if entry was via limit order (maker fee)
 
     def __post_init__(self):
         self.remaining_quantity = self.quantity
@@ -128,6 +145,7 @@ class BacktestEngine:
 
         # Backtest state
         self.positions: Dict[str, BacktestPosition] = {}
+        self.pending_orders: Dict[str, PendingLimitOrder] = {}  # Pending limit orders
         self.closed_trades: List[Dict] = []
         self.equity_curve: List[Tuple[int, float]] = []
         self.daily_pnl = 0.0
@@ -220,6 +238,9 @@ class BacktestEngine:
             volume = float(kline[5])
 
             current_time = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+
+            # Check and process pending limit orders
+            await self._process_pending_orders(symbol, high_price, low_price, close_price, timestamp)
 
             # Update existing positions
             await self._update_positions(symbol, high_price, low_price, close_price, timestamp)
@@ -430,7 +451,13 @@ class BacktestEngine:
             if best:
                 direction, score = best
                 logger.info(f"[BACKTEST] Entry signal: {direction} {symbol} @ {current_price:.2f}, score={score.total_score:.1f}")
-                await self._open_position(symbol, direction, current_price, timestamp, score)
+
+                # Use limit orders if enabled in config
+                use_limits = getattr(self.config.trading, 'use_limit_orders', False)
+                if use_limits:
+                    await self._place_limit_order(symbol, direction, current_price, timestamp, score)
+                else:
+                    await self._open_position(symbol, direction, current_price, timestamp, score)
 
         except Exception as e:
             logger.error(f"[BACKTEST] Error evaluating entry: {e}", exc_info=True)
@@ -553,8 +580,13 @@ class BacktestEngine:
         if symbol in self.positions:
             return False
 
-        # Max positions reached
-        if len(self.positions) >= self.config.trading.max_positions:
+        # Already have pending order for this symbol
+        if symbol in self.pending_orders:
+            return False
+
+        # Max positions reached (count both positions and pending orders)
+        total_exposure = len(self.positions) + len(self.pending_orders)
+        if total_exposure >= self.config.trading.max_positions:
             return False
 
         # Daily loss limit hit
@@ -569,6 +601,208 @@ class BacktestEngine:
 
         return True
 
+    async def _place_limit_order(
+        self,
+        symbol: str,
+        direction: str,
+        market_price: float,
+        timestamp: int,
+        clc_score: CLCScore
+    ):
+        """Place a limit order (simulated) to get maker fees"""
+
+        # Calculate limit order price
+        # For LONG: place slightly above market (e.g., at ask) to ensure fill
+        # For SHORT: place slightly below market (e.g., at bid)
+        offset_bps = getattr(self.config.trading, 'limit_order_offset_bps', 5)  # 0.05% default
+        offset_multiplier = offset_bps / 10000  # Convert bps to decimal
+
+        if direction == "LONG":
+            # Buy limit: place at or slightly above market to ensure fill
+            limit_price = market_price * (1 + offset_multiplier)
+        else:
+            # Sell limit: place at or slightly below market
+            limit_price = market_price * (1 - offset_multiplier)
+
+        # Calculate position parameters
+        leverage = self.config.trading.leverage
+        initial_margin = self.config.trading.position_size_usdt
+        notional_value = initial_margin * leverage
+        quantity = notional_value / market_price  # Use market price for quantity calc
+
+        # Get risk/reward parameters
+        if symbol.startswith("BTC"):
+            risk_points = self.config.trading.btc_risk_points
+            target_points = self.config.trading.btc_target_points
+        else:
+            risk_points = self.config.trading.eth_risk_points
+            target_points = self.config.trading.eth_target_points
+
+        # Calculate stop loss and take profit (from limit price)
+        if direction == "LONG":
+            stop_loss = limit_price - risk_points
+            take_profit = limit_price + target_points
+        else:
+            stop_loss = limit_price + risk_points
+            take_profit = limit_price - target_points
+
+        # Get market context for logging
+        ctx = await self.context_analyzer.get_context(symbol, "1h", market_price)
+        locations = await self.location_detector.get_all_locations(symbol, market_price)
+
+        # Store enhanced CLC score with market context
+        enhanced_clc = clc_score.__dict__ if hasattr(clc_score, '__dict__') else {}
+        enhanced_clc['market_context'] = {
+            'regime': ctx.regime,
+            'adx': ctx.adx,
+            'vwap': ctx.vwap,
+            'ema20': ctx.ema20,
+            'ema50': ctx.ema50,
+            'ema200': ctx.ema200,
+            'bb_upper': ctx.bb_upper,
+            'bb_lower': ctx.bb_lower,
+            'range_high': ctx.range_high,
+            'range_low': ctx.range_low
+        }
+
+        # Find nearby S/R zones
+        nearby_sr = []
+        sr_zones = locations.get('sr_zones', [])
+        for zone in sr_zones[:3]:
+            dist_pct = abs(market_price - zone.level) / market_price * 100
+            if dist_pct < 2.0:
+                nearby_sr.append({
+                    'level': zone.level,
+                    'type': zone.zone_type,
+                    'distance_pct': dist_pct,
+                    'strength': zone.strength
+                })
+
+        enhanced_clc['nearby_sr_zones'] = nearby_sr
+
+        # Create pending limit order
+        pending_order = PendingLimitOrder(
+            symbol=symbol,
+            direction=direction,
+            limit_price=limit_price,
+            market_price=market_price,
+            order_time=timestamp,
+            quantity=quantity,
+            stop_loss=stop_loss,
+            take_profit=take_profit,
+            clc_score=enhanced_clc,
+            retry_count=0
+        )
+
+        self.pending_orders[symbol] = pending_order
+
+        logger.info(f"[BACKTEST] LIMIT ORDER {direction} {symbol}: limit=${limit_price:.2f}, market=${market_price:.2f}, qty={quantity:.6f}, SL={stop_loss:.2f}, TP={take_profit:.2f}")
+
+    async def _process_pending_orders(
+        self,
+        symbol: str,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+        timestamp: int
+    ):
+        """Check if pending limit orders should fill based on candle action"""
+
+        if symbol not in self.pending_orders:
+            return
+
+        order = self.pending_orders[symbol]
+
+        # Check if order would fill
+        filled = False
+        fill_price = order.limit_price
+
+        if order.direction == "LONG":
+            # Buy limit fills if price drops to or below our limit
+            if low_price <= order.limit_price:
+                filled = True
+                # Filled at limit price or better (lower)
+                fill_price = order.limit_price
+        else:  # SHORT
+            # Sell limit fills if price rises to or above our limit
+            if high_price >= order.limit_price:
+                filled = True
+                # Filled at limit price or better (higher)
+                fill_price = order.limit_price
+
+        if filled:
+            # Order filled! Convert to position
+            logger.info(f"[BACKTEST] LIMIT FILLED {order.direction} {symbol} @ {fill_price:.2f} (limit was {order.limit_price:.2f})")
+
+            # Create position from filled limit order
+            position = BacktestPosition(
+                symbol=symbol,
+                direction=order.direction,
+                entry_price=fill_price,
+                entry_time=timestamp,
+                quantity=order.quantity,
+                stop_loss=order.stop_loss,
+                take_profit=order.take_profit,
+                clc_score=order.clc_score,
+                current_price=fill_price,
+                used_limit_order=True  # Flag for maker fee calculation
+            )
+
+            self.positions[symbol] = position
+            self.last_trade_time[symbol] = timestamp
+
+            # Remove from pending orders
+            del self.pending_orders[symbol]
+
+        else:
+            # Check for timeout
+            timeout_ms = getattr(self.config.trading, 'limit_order_timeout_seconds', 30) * 1000
+            time_elapsed = timestamp - order.order_time
+
+            if time_elapsed >= timeout_ms:
+                max_retries = getattr(self.config.trading, 'max_limit_retries', 3)
+
+                if order.retry_count < max_retries:
+                    # Retry with new limit price closer to market
+                    logger.info(f"[BACKTEST] Limit order timeout, retrying... (attempt {order.retry_count + 1}/{max_retries})")
+                    order.retry_count += 1
+                    order.order_time = timestamp  # Reset timer
+
+                    # Adjust limit price closer to market (more aggressive)
+                    offset_bps = getattr(self.config.trading, 'limit_order_offset_bps', 5)
+                    # Make it more aggressive each retry
+                    aggressive_offset = offset_bps * (1 + order.retry_count * 0.5)
+                    offset_multiplier = aggressive_offset / 10000
+
+                    if order.direction == "LONG":
+                        order.limit_price = close_price * (1 + offset_multiplier)
+                    else:
+                        order.limit_price = close_price * (1 - offset_multiplier)
+
+                    logger.info(f"[BACKTEST] New limit price: ${order.limit_price:.2f} (was ${order.market_price:.2f})")
+
+                else:
+                    # Max retries reached, cancel limit and use market order
+                    logger.info(f"[BACKTEST] Limit order max retries reached, executing at market price ${close_price:.2f}")
+
+                    # Create position at market price (taker fee will apply)
+                    position = BacktestPosition(
+                        symbol=symbol,
+                        direction=order.direction,
+                        entry_price=close_price,
+                        entry_time=timestamp,
+                        quantity=order.quantity,
+                        stop_loss=order.stop_loss,
+                        take_profit=order.take_profit,
+                        clc_score=order.clc_score,
+                        current_price=close_price,
+                        used_limit_order=False  # Taker fee applies
+                    )
+
+                    self.positions[symbol] = position
+                    self.last_trade_time[symbol] = timestamp
+                    del self.pending_orders[symbol]
+
     async def _open_position(
         self,
         symbol: str,
@@ -577,7 +811,7 @@ class BacktestEngine:
         timestamp: int,
         clc_score: CLCScore
     ):
-        """Open a simulated position"""
+        """Open a simulated position (market order - taker fees)"""
 
         # Calculate position size with leverage
         leverage = self.config.trading.leverage
@@ -817,9 +1051,17 @@ class BacktestEngine:
             pnl = (pos.entry_price - exit_price) * pos.remaining_quantity
 
         # Calculate fees (entry + exit)
-        fee_rate = self.config.trading.taker_fee_bps / 10000
-        entry_fees = pos.entry_price * pos.quantity * fee_rate
-        exit_fees = exit_price * pos.remaining_quantity * fee_rate
+        # Entry fee: use maker fee if limit order was used, otherwise taker fee
+        if pos.used_limit_order:
+            entry_fee_rate = self.config.trading.maker_fee_bps / 10000  # 0.02%
+        else:
+            entry_fee_rate = self.config.trading.taker_fee_bps / 10000  # 0.04%
+
+        # Exit fee: always taker fee (market order)
+        exit_fee_rate = self.config.trading.taker_fee_bps / 10000
+
+        entry_fees = pos.entry_price * pos.quantity * entry_fee_rate
+        exit_fees = exit_price * pos.remaining_quantity * exit_fee_rate
         total_fees = entry_fees + exit_fees
 
         net_pnl = pnl - total_fees
@@ -862,6 +1104,9 @@ class BacktestEngine:
             'exit_reason': reason,
             'duration_minutes': (timestamp - pos.entry_time) / 60000,
             'clc_score': pos.clc_score,
+            'used_limit_order': pos.used_limit_order,  # Track if maker or taker fee was used
+            'entry_fee': entry_fees,
+            'exit_fee': exit_fees,
             # For chart generation
             'market_context': pos.clc_score.get('market_context', {}) if isinstance(pos.clc_score, dict) else {},
             'sr_zones': pos.clc_score.get('nearby_sr_zones', []) if isinstance(pos.clc_score, dict) else []

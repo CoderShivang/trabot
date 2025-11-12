@@ -8,11 +8,18 @@ trading:
   paper_trading: true
   min_time_between_trades_seconds: 60  # 1 minute cooldown for backtesting (prevents duplicate signals)
 
+  # Limit Order Strategy - Use limit orders to get maker fees (0.02%) instead of taker (0.04%)
+  # This reduces round-trip fees from ~$4 to ~$2 (50% savings!)
+  use_limit_orders: true
+  limit_order_offset_bps: 5      # Place limit 0.05% through current price (ensures fill + maker fee)
+  limit_order_timeout_seconds: 30  # Cancel and retry if not filled within 30 seconds
+  max_limit_retries: 3           # Max times to retry placing limit before using market order
+
   # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
+  # With limit orders: ~$2 in fees per round trip (0.02% maker × $5000 × 2)
   # Target: $7-10 total loss INCLUDING fees
-  # With ~$4 in fees per round trip (0.04% × $5000 × 2), SL should create ~$6 gross loss
-  btc_risk_points: 100.0    # ~100 BTC points SL for ~$6 gross + $4 fees = $10 total
-  btc_target_points: 200.0  # ~200 BTC points TP for ~$12 target (2:1 R/R)
+  btc_risk_points: 100.0    # ~100 BTC points SL for ~$5 gross + $2 fees = $7 total
+  btc_target_points: 200.0  # ~200 BTC points TP for ~$10 gross - $2 fees = $8 net (1.14:1 net R/R)
   eth_risk_points: 10.0     # ETH stop loss
   eth_target_points: 20.0   # ETH take profit
 
