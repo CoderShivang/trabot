@@ -227,11 +227,39 @@ class BacktestEngine:
 
         # Iterate through each candle
         total_candles = len(klines)
-        logger.info(f"[BACKTEST] Starting main evaluation loop for {total_candles} candles...")
+        logger.info(f"[BACKTEST] Starting backtest for {total_candles} candles...\n")
+
+        # Temporarily suppress verbose logs during backtest loop (only show errors)
+        import sys
+        import logging as logging_module
+
+        # Suppress logs from all modules during backtest
+        logging_module.getLogger('src.strategy.location_detector').setLevel(logging_module.ERROR)
+        logging_module.getLogger('src.strategy.context_analyzer').setLevel(logging_module.ERROR)
+        logging_module.getLogger('src.strategy.clc_engine').setLevel(logging_module.ERROR)
+        logging_module.getLogger('src.data.binance_client').setLevel(logging_module.ERROR)
+        original_log_level = logger.level
+        logger.setLevel(logging_module.ERROR)  # Only show errors during backtest
+
+        # Progress bar setup
+        start_time = datetime.now(timezone.utc)
+
         for i, kline in enumerate(klines):
-            if i % 100 == 0:
-                progress = (i / total_candles) * 100
-                logger.info(f"[BACKTEST] Progress: {progress:.1f}% ({i}/{total_candles} candles), Trades: {len(self.closed_trades)}")
+            # Update progress bar every candle
+            progress = (i + 1) / total_candles * 100
+            elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
+            candles_per_sec = (i + 1) / elapsed if elapsed > 0 else 0
+            eta_seconds = (total_candles - i - 1) / candles_per_sec if candles_per_sec > 0 else 0
+            eta_str = f"{int(eta_seconds//60)}m {int(eta_seconds%60)}s" if eta_seconds > 60 else f"{int(eta_seconds)}s"
+
+            # Create progress bar (ASCII characters for Windows compatibility)
+            bar_width = 40
+            filled = int(bar_width * progress / 100)
+            bar = '=' * filled + '-' * (bar_width - filled)
+
+            # Print progress (overwrite same line)
+            sys.stdout.write(f"\r[BACKTEST] {bar} {progress:.1f}% | Candle {i+1}/{total_candles} | Trades: {len(self.closed_trades)} | ETA: {eta_str}   ")
+            sys.stdout.flush()
 
             # Extract candle data
             timestamp = int(kline[0])
@@ -256,6 +284,11 @@ class BacktestEngine:
 
             # Record equity
             self.equity_curve.append((timestamp, self.current_balance))
+
+        # Restore logger level and print newline after progress bar
+        logger.setLevel(original_log_level)
+        sys.stdout.write("\n")
+        sys.stdout.flush()
 
         logger.info("[BACKTEST] Backtest completed, calculating metrics...")
 
