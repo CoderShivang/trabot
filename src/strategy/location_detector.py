@@ -105,8 +105,8 @@ class LocationDetector:
                     cached_zones, current_price
                 )
 
-                # Get MTF zones (these are cheaper to compute)
-                mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
+                # Use cached MTF zones (no need to recalculate)
+                mtf_zones = cached_data.get('mtf_zones', {'5m': [], '15m': []})
 
                 return {
                     'all_zones': cached_zones,
@@ -208,7 +208,8 @@ class LocationDetector:
         cache_data = {
             'consolidated_zones': final_zones,
             'vwap_15m': vwap_data.get('vwap'),
-            'ema_levels': ema_data
+            'ema_levels': ema_data,
+            'mtf_zones': mtf_zones  # Cache MTF zones to avoid expensive recalculation
         }
         self.zone_cache[cache_key] = (cache_data, current_time)
 
