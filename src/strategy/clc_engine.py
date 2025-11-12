@@ -162,7 +162,7 @@ class CLCEngine:
         locations = await self.location_detector.get_all_locations(symbol, current_price)
         at_location = False; loc_type=None; score_loc=0.0; loc_reasons=[]
         sr_zones = locations.get('sr_zones', [])
-        max_dist = self.config.clc_strategy.location.get('max_distance_from_level_pct', 0.005) if isinstance(self.config.clc_strategy.location, dict) else 0.005
+        max_dist = getattr(self.config.clc_strategy.location, 'max_distance_from_level_pct', 0.005)
 
         # Check main S/R zones
         for z in sr_zones:
@@ -212,9 +212,9 @@ class CLCEngine:
         conf = self.confirmation_analyzer.analyze(symbol, orderbook, recent_trades)
         conf_score = 0.0; conf_signals=[]; conf_warnings=[]
         # use multiple signals: imbalance, delta, tape velocity, divergence, absorption
-        if conf['imbalance'] >= self.config.clc_strategy.confirmation.get('imbalance_threshold',0.7):
+        if conf['imbalance'] >= getattr(self.config.clc_strategy.confirmation, 'imbalance_threshold', 0.7):
             conf_score += 25; conf_signals.append(f"imbalance:{conf['imbalance']:.2f}")
-        if conf['delta'] >= self.config.clc_strategy.confirmation.get('delta_threshold',0.6):
+        if conf['delta'] >= getattr(self.config.clc_strategy.confirmation, 'delta_threshold', 0.6):
             conf_score += 25; conf_signals.append(f"delta:{conf['delta']:.2f}")
         if conf.get('tape_velocity',0) > 10:
             conf_score += 10; conf_signals.append("high_tape_velocity")

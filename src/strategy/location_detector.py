@@ -573,7 +573,7 @@ class LocationDetector:
     ) -> tuple[bool, Optional[SRZone], float]:
         """Check if current price is at a zone and calculate location score"""
 
-        max_distance_pct = self.config.clc_strategy.location.get('max_distance_from_level_pct', 0.005)
+        max_distance_pct = getattr(self.config.clc_strategy.location, 'max_distance_from_level_pct', 0.005)
 
         at_location = False
         best_zone = None

@@ -402,7 +402,7 @@ class BacktestEngine:
 
             # Log scores for debugging (only log every 100 candles to avoid spam)
             if candle_index % 100 == 0:
-                min_conf_signals = self.config.clc_strategy.confirmation.get('min_signals_required', 2) if isinstance(self.config.clc_strategy.confirmation, dict) else 2
+                min_conf_signals = getattr(self.config.clc_strategy.confirmation, 'min_signals_required', 2)
                 logger.info(f"[BACKTEST] Candle {candle_index} @ ${current_price:.2f}:")
                 logger.info(f"  LONG: total={long_score.total_score:.1f}, ctx={long_score.context_score:.1f}, loc={long_score.location_score:.1f}, conf={long_score.confirmation_score:.1f}, big={long_score.big_orders_score:.1f}")
                 logger.info(f"    at_location={long_score.at_location}, conf_signals={len(long_score.confirmation_signals)}, location_type={long_score.location_type}")
@@ -412,7 +412,7 @@ class BacktestEngine:
 
             # Determine best direction
             best = None
-            min_conf_signals = self.config.clc_strategy.confirmation.get('min_signals_required', 2) if isinstance(self.config.clc_strategy.confirmation, dict) else 2
+            min_conf_signals = getattr(self.config.clc_strategy.confirmation, 'min_signals_required', 2)
             if long_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
                 best = ("LONG", long_score)
             if short_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
