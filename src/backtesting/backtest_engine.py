@@ -221,6 +221,9 @@ class BacktestEngine:
         # Pass klines cache to location detector for MTF S/R zone detection
         self.location_detector.klines_cache = self.klines_cache
 
+        # Initialize context analyzer with backtest mode (timestamp will be updated per candle)
+        self.context_analyzer.set_backtest_data(self.klines_cache, 0)
+
         # Get klines for iteration
         klines = self.klines_cache[symbol][timeframe]
         logger.info(f"[BACKTEST] Loaded {len(klines)} candles")
@@ -233,23 +236,9 @@ class BacktestEngine:
         import sys
         import logging as logging_module
 
-        # Suppress console output by setting all StreamHandlers to ERROR level
-        # This prevents DEBUG/INFO logs from appearing in terminal during backtest
-        original_handler_levels = []
-
-        for name in logging_module.Logger.manager.loggerDict:
-            log = logging_module.getLogger(name)
-            for handler in log.handlers:
-                if isinstance(handler, logging_module.StreamHandler) and not isinstance(handler, logging_module.FileHandler):
-                    original_handler_levels.append((handler, handler.level))
-                    handler.setLevel(logging_module.ERROR)
-
-        # Also check root logger handlers
-        root_logger = logging_module.getLogger()
-        for handler in root_logger.handlers:
-            if isinstance(handler, logging_module.StreamHandler) and not isinstance(handler, logging_module.FileHandler):
-                original_handler_levels.append((handler, handler.level))
-                handler.setLevel(logging_module.ERROR)
+        # Disable all logging below ERROR level globally
+        # This works even for loggers created during the backtest loop
+        logging_module.disable(logging_module.INFO)
 
         # Progress bar setup
         start_time = datetime.now(timezone.utc)
@@ -281,6 +270,10 @@ class BacktestEngine:
 
             current_time = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
 
+            # Update context analyzer's current timestamp for this candle
+            # This ensures indicators (ADX, ATR, etc.) are calculated from historical data up to this point
+            self.context_analyzer.backtest_current_timestamp = timestamp
+
             # Check and process pending limit orders
             await self._process_pending_orders(symbol, high_price, low_price, close_price, timestamp)
 
@@ -295,9 +288,11 @@ class BacktestEngine:
             # Record equity
             self.equity_curve.append((timestamp, self.current_balance))
 
-        # Restore handler levels and print newline after progress bar
-        for handler, level in original_handler_levels:
-            handler.setLevel(level)
+        # Re-enable logging and print newline after progress bar
+        logging_module.disable(logging_module.NOTSET)
+
+        # Clear backtest mode from context analyzer
+        self.context_analyzer.clear_backtest_mode()
 
         sys.stdout.write("\n")
         sys.stdout.flush()

@@ -43,8 +43,30 @@ class ContextAnalyzer:
         self.config = config
         self.client = binance_client
 
+        # Backtest mode support
+        self.backtest_mode = False
+        self.backtest_klines_cache = None
+        self.backtest_current_timestamp = None
+
+    def set_backtest_data(self, klines_cache: dict, current_timestamp: int):
+        """Set backtest mode and provide historical data"""
+        self.backtest_mode = True
+        self.backtest_klines_cache = klines_cache
+        self.backtest_current_timestamp = current_timestamp
+
+    def clear_backtest_mode(self):
+        """Disable backtest mode"""
+        self.backtest_mode = False
+        self.backtest_klines_cache = None
+        self.backtest_current_timestamp = None
+
     async def get_context(self, symbol: str, timeframe: str, current_price: float) -> MarketContext:
-        klines = await self.client.get_klines(symbol, timeframe, 500)
+        # In backtest mode, use historical data up to current_timestamp
+        if self.backtest_mode and self.backtest_klines_cache:
+            klines = self._get_historical_klines(symbol, timeframe, self.backtest_current_timestamp)
+        else:
+            # Live mode: fetch from API
+            klines = await self.client.get_klines(symbol, timeframe, 500)
         if not klines:
             return MarketContext(symbol, current_price, current_price, current_price, current_price, current_price, 0.0, 0.0)
 
@@ -224,4 +246,30 @@ class ContextAnalyzer:
         logger.debug(f"[REGIME] ADX={adx:.1f}, BB_width={bb_width_pct:.3f}, Range={price_range_pct:.3f} → {regime.upper()}")
 
         return regime, range_high, range_low
+
+    def _get_historical_klines(self, symbol: str, timeframe: str, current_timestamp: int) -> list:
+        """
+        Get historical klines from cache up to current_timestamp for backtest.
+
+        This creates a sliding window of historical data that progresses with the backtest,
+        ensuring indicators like ADX/ATR update as the backtest moves forward.
+        """
+        if not self.backtest_klines_cache:
+            return []
+
+        # Get the klines cache for this symbol
+        symbol_cache = self.backtest_klines_cache.get(symbol, {})
+
+        # Get klines for the requested timeframe
+        all_klines = symbol_cache.get(timeframe, [])
+
+        if not all_klines:
+            return []
+
+        # Filter klines up to current_timestamp (inclusive)
+        # Take last 500 candles before current timestamp for context calculation
+        historical_klines = [k for k in all_klines if int(k[0]) <= current_timestamp]
+
+        # Return last 500 candles (enough for EMA200 and other indicators)
+        return historical_klines[-500:] if len(historical_klines) > 500 else historical_klines
 
