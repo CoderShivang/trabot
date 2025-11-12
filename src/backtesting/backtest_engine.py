@@ -472,6 +472,8 @@ class BacktestEngine:
                 else:
                     await self._open_position(symbol, direction, current_price, timestamp, score)
 
+            logger.debug(f"[BACKTEST] _evaluate_entry completing for candle {candle_index}")
+
         except Exception as e:
             logger.error(f"[BACKTEST] Error evaluating entry: {e}", exc_info=True)
 
