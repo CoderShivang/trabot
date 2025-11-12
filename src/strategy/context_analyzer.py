@@ -48,6 +48,9 @@ class ContextAnalyzer:
         self.backtest_klines_cache = None
         self.backtest_current_timestamp = None
 
+        # Indicator cache for performance optimization (set by backtest engine)
+        self.indicator_cache = None
+
     def set_backtest_data(self, klines_cache: dict, current_timestamp: int):
         """Set backtest mode and provide historical data"""
         self.backtest_mode = True
@@ -132,6 +135,13 @@ class ContextAnalyzer:
         return float((tp * df['volume']).sum() / df['volume'].sum())
 
     def _atr(self, df: pd.DataFrame, period: int = 14) -> float:
+        # Use pre-calculated cache if available (backtest optimization)
+        if self.indicator_cache and self.backtest_current_timestamp:
+            cached = self.indicator_cache.get(self.backtest_current_timestamp)
+            if cached and 'atr' in cached:
+                return cached['atr']
+
+        # Fallback to calculation (live trading or cache miss)
         high = df['high']
         low = df['low']
         prev_close = df['close'].shift(1)
@@ -144,6 +154,13 @@ class ContextAnalyzer:
 
     def _adx(self, df: pd.DataFrame, period: int = None) -> float:
         """Calculate ADX (Average Directional Index) for trend strength"""
+        # Use pre-calculated cache if available (backtest optimization)
+        if self.indicator_cache and self.backtest_current_timestamp:
+            cached = self.indicator_cache.get(self.backtest_current_timestamp)
+            if cached and 'adx' in cached:
+                return cached['adx']
+
+        # Fallback to calculation (live trading or cache miss)
         if period is None:
             period = self.config.regime_detection.adx_period
 
@@ -185,6 +202,14 @@ class ContextAnalyzer:
 
     def _bollinger_bands(self, df: pd.DataFrame, current_price: float) -> tuple:
         """Calculate Bollinger Bands"""
+        # Use pre-calculated cache if available (backtest optimization)
+        if self.indicator_cache and self.backtest_current_timestamp:
+            cached = self.indicator_cache.get(self.backtest_current_timestamp)
+            if cached and 'bb_width_pct' in cached:
+                return (cached['bb_upper'], (cached['bb_upper'] + cached['bb_lower']) / 2,
+                        cached['bb_lower'], cached['bb_width_pct'])
+
+        # Fallback to calculation (live trading or cache miss)
         period = self.config.regime_detection.bb_period
         std_dev = self.config.regime_detection.bb_std_dev
 
