@@ -141,7 +141,10 @@ async def main():
             logger.info(f"  Exit:  {exit_time} @ ${trade['exit_price']:.2f} ({trade['exit_reason']})")
             logger.info(f"  P&L:   {pnl_color}${pnl:.2f} ({pnl_color}{trade['pnl_pct']:.2f}%)")
             logger.info(f"  Duration: {duration_mins:.1f} minutes")
-            logger.info(f"  Score: {trade['entry_score']:.1f}")
+
+            # Extract entry score from clc_score if available
+            if 'clc_score' in trade and hasattr(trade['clc_score'], 'total_score'):
+                logger.info(f"  Score: {trade['clc_score'].total_score:.1f}")
 
         logger.info("\n" + "=" * 80)
 
