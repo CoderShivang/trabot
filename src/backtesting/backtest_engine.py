@@ -388,8 +388,8 @@ class BacktestEngine:
 
         self.klines_cache[symbol][timeframe] = all_klines
 
-        # Also load higher timeframes for context (15m and 1h)
-        for tf in ['15m', '1h']:
+        # Also load higher timeframes for context (5m, 15m, 1h)
+        for tf in ['5m', '15m', '1h']:
             if tf != timeframe and tf not in self.klines_cache[symbol]:
                 try:
                     logger.info(f"[BACKTEST] Loading {tf} candles for context...")
