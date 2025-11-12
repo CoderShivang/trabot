@@ -424,6 +424,7 @@ class BacktestEngine:
         """Evaluate if we should enter a trade at this candle"""
 
         try:
+            logger.debug(f"[BACKTEST] >>> _evaluate_entry CALLED for candle {candle_index}")
             # Simulate orderbook from recent candles
             orderbook = self._simulate_orderbook(symbol, current_price, klines, candle_index)
 
@@ -442,6 +443,8 @@ class BacktestEngine:
                 symbol, "SHORT", current_price, orderbook, recent_trades
             )
 
+            logger.debug(f"[BACKTEST] Scores calculated for candle {candle_index}")
+
             # Log scores for debugging (only log every 100 candles to avoid spam)
             if candle_index % 100 == 0:
                 min_conf_signals = getattr(self.config.clc_strategy.confirmation, 'min_signals_required', 2)
@@ -453,14 +456,20 @@ class BacktestEngine:
                 logger.info(f"  Entry criteria: score>={self.config.scoring.min_entry_score}, at_location=True, conf_signals>={min_conf_signals}")
 
             # Determine best direction
+            logger.debug(f"[BACKTEST] Checking entry criteria for candle {candle_index}")
             best = None
             min_conf_signals = getattr(self.config.clc_strategy.confirmation, 'min_signals_required', 2)
+            logger.debug(f"[BACKTEST] Checking LONG entry criteria")
             if long_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
                 best = ("LONG", long_score)
+                logger.debug(f"[BACKTEST] LONG meets criteria")
+            logger.debug(f"[BACKTEST] Checking SHORT entry criteria")
             if short_score.meets_entry_criteria(self.config.scoring.min_entry_score, min_conf_signals):
                 if best is None or short_score.total_score > best[1].total_score:
                     best = ("SHORT", short_score)
+                    logger.debug(f"[BACKTEST] SHORT meets criteria")
 
+            logger.debug(f"[BACKTEST] Entry criteria check complete, best={best}")
             if best:
                 direction, score = best
                 logger.info(f"[BACKTEST] Entry signal: {direction} {symbol} @ {current_price:.2f}, score={score.total_score:.1f}")
