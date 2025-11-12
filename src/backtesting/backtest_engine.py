@@ -218,6 +218,9 @@ class BacktestEngine:
         logger.info("[BACKTEST] Loading historical data...")
         await self._load_historical_data(symbol, start_date, end_date, timeframe)
 
+        # Pass klines cache to location detector for MTF S/R zone detection
+        self.location_detector.klines_cache = self.klines_cache
+
         # Get klines for iteration
         klines = self.klines_cache[symbol][timeframe]
         logger.info(f"[BACKTEST] Loaded {len(klines)} candles")

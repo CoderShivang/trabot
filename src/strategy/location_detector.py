@@ -61,11 +61,12 @@ class SRZone:
 class LocationDetector:
     """Enhanced location detector with multiple detection methods"""
 
-    def __init__(self, config, binance_client, feedback_system=None):
+    def __init__(self, config, binance_client, feedback_system=None, klines_cache=None):
         self.config = config
         self.client = binance_client
         self.feedback_system = feedback_system
         self.zone_cache = {}  # Cache for performance
+        self.klines_cache = klines_cache or {}  # Cached klines from backtest
 
     async def get_all_locations(self, symbol: str, current_price: float) -> Dict:
         """
@@ -614,14 +615,24 @@ class LocationDetector:
 
         # Detect 5min S/R zones
         if self.config.clc_strategy.location.use_5min_sr:
-            klines_5m = await self.client.get_klines(symbol, '5m', lookback)
+            # Use cached klines if available (backtest mode), otherwise fetch from API
+            if symbol in self.klines_cache and '5m' in self.klines_cache[symbol]:
+                klines_5m = self.klines_cache[symbol]['5m'][-lookback:]  # Get last N candles
+            else:
+                klines_5m = await self.client.get_klines(symbol, '5m', lookback)
+
             if klines_5m:
                 zones_5m = self._detect_sr_from_klines(klines_5m, min_touches, timeframe='5m')
                 mtf_zones['5m'] = zones_5m
 
         # Detect 15min S/R zones
         if self.config.clc_strategy.location.use_15min_sr:
-            klines_15m = await self.client.get_klines(symbol, '15m', lookback)
+            # Use cached klines if available (backtest mode), otherwise fetch from API
+            if symbol in self.klines_cache and '15m' in self.klines_cache[symbol]:
+                klines_15m = self.klines_cache[symbol]['15m'][-lookback:]  # Get last N candles
+            else:
+                klines_15m = await self.client.get_klines(symbol, '15m', lookback)
+
             if klines_15m:
                 zones_15m = self._detect_sr_from_klines(klines_15m, min_touches, timeframe='15m')
                 mtf_zones['15m'] = zones_15m

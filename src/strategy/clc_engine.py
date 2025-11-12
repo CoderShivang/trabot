@@ -72,12 +72,12 @@ class CLCEngine:
         # Filter 1: Trend Alignment (CRITICAL!)
         # Don't fight the trend - only LONG in bullish trends, SHORT in bearish trends
         if ctx.trend_direction == "bullish" and direction == "SHORT":
-            warnings.append("⚠️ REJECTED: Trying to SHORT a BULLISH trend!")
+            warnings.append("REJECTED: Trying to SHORT a BULLISH trend!")
             logger.warning(f"[CLC] REJECTED {direction}: Market is {ctx.trend_direction}, don't fight the trend!")
             return self._create_reject_score("Fighting bullish trend")
 
         if ctx.trend_direction == "bearish" and direction == "LONG":
-            warnings.append("⚠️ REJECTED: Trying to LONG a BEARISH trend!")
+            warnings.append("REJECTED: Trying to LONG a BEARISH trend!")
             logger.warning(f"[CLC] REJECTED {direction}: Market is {ctx.trend_direction}, don't fight the trend!")
             return self._create_reject_score("Fighting bearish trend")
 
@@ -85,18 +85,18 @@ class CLCEngine:
         # Don't trade when volatility is too low (choppy/Asian session)
         min_atr = getattr(self.config.trading, 'min_atr_threshold', 80)
         if ctx.atr < min_atr:
-            warnings.append(f"⚠️ REJECTED: ATR too low ({ctx.atr:.1f} < {min_atr})")
+            warnings.append(f"REJECTED: ATR too low ({ctx.atr:.1f} < {min_atr})")
             logger.warning(f"[CLC] REJECTED {direction}: ATR {ctx.atr:.1f} below minimum {min_atr}")
             return self._create_reject_score(f"ATR too low ({ctx.atr:.1f})")
 
         # Filter 3: Avoid Choppy Markets
         # If ADX < 20, market is choppy - don't trade
         if ctx.adx < 20:
-            warnings.append(f"⚠️ REJECTED: Market too choppy (ADX={ctx.adx:.1f})")
+            warnings.append(f"REJECTED: Market too choppy (ADX={ctx.adx:.1f})")
             logger.warning(f"[CLC] REJECTED {direction}: Market choppy (ADX={ctx.adx:.1f})")
             return self._create_reject_score(f"Choppy market (ADX={ctx.adx:.1f})")
 
-        logger.info(f"[CLC] ✅ Quality filters passed: Trend={ctx.trend_direction}, ATR={ctx.atr:.1f}, ADX={ctx.adx:.1f}")
+        logger.info(f"[CLC] PASS: Quality filters passed: Trend={ctx.trend_direction}, ATR={ctx.atr:.1f}, ADX={ctx.adx:.1f}")
 
         # NEW APPROACH: Calculate bullish and bearish signals, then score based on direction
         # This ensures LONG and SHORT never get the same scores in the same market conditions
