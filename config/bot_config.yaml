@@ -6,7 +6,7 @@ trading:
   taker_fee_bps: 5    # 0.05% Binance futures taker fee
   maker_fee_bps: 2    # 0.02% Binance futures maker fee
   paper_trading: true
-  min_time_between_trades_seconds: 900  # 15 minutes cooldown
+  min_time_between_trades_seconds: 60  # 1 minute cooldown for backtesting (prevents duplicate signals)
 
   # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
   # Target: $7-10 total loss INCLUDING fees
