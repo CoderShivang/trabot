@@ -21,7 +21,7 @@ from strategy.location_detector import LocationDetector
 from strategy.confirmation import ConfirmationAnalyzer
 from strategy.big_orders import BigOrdersDetector
 from learning.feedback_system import AdaptiveFeedbackSystem
-from backtesting.trade_visualizer import TradeVisualizer
+from backtesting.trade_dashboard import TradeDashboard
 from utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -141,7 +141,7 @@ class BacktestEngine:
         self.confirmation_analyzer = None
         self.big_orders_detector = None
         self.clc_engine = None
-        self.trade_visualizer = None
+        self.trade_dashboard = None
 
         # Backtest state
         self.positions: Dict[str, BacktestPosition] = {}
@@ -187,7 +187,7 @@ class BacktestEngine:
             self.big_orders_detector,
             self.feedback_system
         )
-        self.trade_visualizer = TradeVisualizer(self.config, self.binance_client)
+        self.trade_dashboard = TradeDashboard(self.config, self.binance_client)
 
         logger.info("[BACKTEST] All components ready")
 
@@ -265,10 +265,16 @@ class BacktestEngine:
         # Save results
         self._save_backtest_results(metrics)
 
-        # Generate trade visualization charts
+        # Generate interactive HTML dashboard
         if self.closed_trades:
-            logger.info(f"[BACKTEST] Generating charts for {len(self.closed_trades)} trades...")
-            await self._generate_trade_charts()
+            logger.info(f"[BACKTEST] Generating interactive dashboard for {len(self.closed_trades)} trades...")
+            dashboard_path = await self.trade_dashboard.generate_dashboard(
+                trades=self.closed_trades,
+                metrics=metrics,
+                start_date=start_date,
+                end_date=end_date
+            )
+            logger.info(f"[BACKTEST] ✅ Dashboard ready! Open: {dashboard_path}")
 
         return metrics
 
@@ -1277,49 +1283,3 @@ class BacktestEngine:
         equity_df.to_csv(results_dir / f'equity_{timestamp}.csv', index=False)
 
         logger.info(f"[BACKTEST] Results saved to {results_dir}")
-
-    async def _generate_trade_charts(self):
-        """Generate visualization charts for all trades"""
-
-        logger.info("[BACKTEST] Generating trade visualization charts...")
-
-        for i, trade in enumerate(self.closed_trades, 1):
-            try:
-                # Extract market context from trade record
-                market_ctx_dict = trade.get('market_context', {})
-                sr_zones_list = trade.get('sr_zones', [])
-
-                # Create a simple object to hold context data
-                class MarketContextObj:
-                    def __init__(self, ctx_dict):
-                        self.regime = ctx_dict.get('regime', 'unknown')
-                        self.adx = ctx_dict.get('adx', 0.0)
-                        self.vwap = ctx_dict.get('vwap', 0.0)
-                        self.ema20 = ctx_dict.get('ema20', 0.0)
-                        self.ema50 = ctx_dict.get('ema50', 0.0)
-                        self.ema200 = ctx_dict.get('ema200', 0.0)
-
-                market_context = MarketContextObj(market_ctx_dict)
-
-                # Convert S/R zone dicts to list format expected by visualizer
-                sr_zones = []
-                for zone in sr_zones_list:
-                    sr_zones.append({
-                        'level': zone.get('level', 0.0),
-                        'type': zone.get('type', 'unknown'),
-                        'strength': zone.get('strength', 5.0)
-                    })
-
-                # Generate chart for this trade
-                await self.trade_visualizer.generate_trade_chart(
-                    trade=trade,
-                    market_context=market_context,
-                    sr_zones=sr_zones,
-                    trade_num=i
-                )
-
-            except Exception as e:
-                logger.error(f"Failed to generate chart for trade {i}: {e}")
-                continue
-
-        logger.info(f"[BACKTEST] Chart generation complete. Charts saved to backtest_charts/")
