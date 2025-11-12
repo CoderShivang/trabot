@@ -424,7 +424,7 @@ class BacktestEngine:
         """Evaluate if we should enter a trade at this candle"""
 
         try:
-            logger.info(f"[BACKTEST] ⚡ Evaluating candle {candle_index} @ ${current_price:.2f}")
+            logger.info(f"[BACKTEST] >>> Evaluating candle {candle_index} @ ${current_price:.2f}")
             logger.debug(f"[BACKTEST] >>> _evaluate_entry CALLED for candle {candle_index}")
             # Simulate orderbook from recent candles
             orderbook = self._simulate_orderbook(symbol, current_price, klines, candle_index)
@@ -443,7 +443,7 @@ class BacktestEngine:
                 symbol, "SHORT", current_price, orderbook, recent_trades
             )
 
-            logger.info(f"[BACKTEST] ✓ Scoring complete for candle {candle_index}: LONG={long_score.total_score:.1f}, SHORT={short_score.total_score:.1f}")
+            logger.info(f"[BACKTEST] [OK] Scoring complete for candle {candle_index}: LONG={long_score.total_score:.1f}, SHORT={short_score.total_score:.1f}")
             logger.debug(f"[BACKTEST] Scores calculated for candle {candle_index}")
 
             # Log scores for debugging (only log every 100 candles to avoid spam)
@@ -482,7 +482,7 @@ class BacktestEngine:
                 else:
                     await self._open_position(symbol, direction, current_price, timestamp, score)
 
-            logger.info(f"[BACKTEST] ✓ Candle {candle_index} evaluation complete")
+            logger.info(f"[BACKTEST] [DONE] Candle {candle_index} evaluation complete")
             logger.debug(f"[BACKTEST] _evaluate_entry completing for candle {candle_index}")
 
         except Exception as e:
