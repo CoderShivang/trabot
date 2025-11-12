@@ -9,10 +9,12 @@ trading:
   min_time_between_trades_seconds: 900  # 15 minutes cooldown
 
   # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
-  btc_risk_points: 150.0    # ~150-200 BTC points SL for $7-10 max loss
-  btc_target_points: 250.0  # ~200-300 BTC points TP for $10-15 target
-  eth_risk_points: 15.0     # ETH stop loss
-  eth_target_points: 30.0   # ETH take profit
+  # Target: $7-10 total loss INCLUDING fees
+  # With ~$5 in fees per round trip, SL should create ~$5 gross loss
+  btc_risk_points: 100.0    # ~100 BTC points SL for ~$5 gross + $5 fees = $10 total
+  btc_target_points: 200.0  # ~200 BTC points TP for ~$10 target (2:1 R/R)
+  eth_risk_points: 10.0     # ETH stop loss
+  eth_target_points: 20.0   # ETH take profit
 
 clc_strategy:
   context:
