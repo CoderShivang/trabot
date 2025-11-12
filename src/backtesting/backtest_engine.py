@@ -431,19 +431,33 @@ class BacktestEngine:
         self.klines_cache[symbol][timeframe] = all_klines
 
         # Also load higher timeframes for context (5m, 15m, 1h)
+        # CRITICAL: Load historical data BEFORE backtest start for indicator calculation
+        # We need at least 500 candles for EMA200 and other indicators
         for tf in ['5m', '15m', '1h']:
             if tf != timeframe and tf not in self.klines_cache[symbol]:
                 try:
-                    logger.info(f"[BACKTEST] Loading {tf} candles for context...")
+                    # Calculate how far back to load based on timeframe
+                    # Goal: Get ~500 candles of historical data before backtest starts
+                    tf_minutes = {
+                        '5m': 5,
+                        '15m': 15,
+                        '1h': 60
+                    }[tf]
+
+                    # Load 500 candles before start + backtest period
+                    lookback_ms = 500 * tf_minutes * 60 * 1000
+                    context_start_ms = start_ms - lookback_ms
+
+                    logger.info(f"[BACKTEST] Loading {tf} candles for context (including {500} historical candles)...")
                     klines = await self.binance_client.get_klines(
                         symbol=symbol,
                         interval=tf,
                         limit=1000,
-                        start_time=start_ms,
+                        start_time=context_start_ms,  # Start 500 candles before backtest
                         end_time=end_ms
                     )
                     self.klines_cache[symbol][tf] = klines
-                    logger.info(f"[BACKTEST] Loaded {len(klines)} {tf} candles")
+                    logger.info(f"[BACKTEST] Loaded {len(klines)} {tf} candles (historical + backtest period)")
                     await asyncio.sleep(0.5)
                 except Exception as e:
                     logger.error(f"[BACKTEST] Error loading {tf} klines: {e}")
