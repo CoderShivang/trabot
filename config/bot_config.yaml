@@ -3,16 +3,16 @@ trading:
   position_size_usdt: 100.0
   max_positions: 2
   leverage: 50  # Reduced from 100x for better risk management
-  taker_fee_bps: 5    # 0.05% Binance futures taker fee
-  maker_fee_bps: 2    # 0.02% Binance futures maker fee
+  taker_fee_bps: 4    # 0.04% Binance futures taker fee (VIP 0 - verified from testnet)
+  maker_fee_bps: 2    # 0.02% Binance futures maker fee (VIP 0)
   paper_trading: true
   min_time_between_trades_seconds: 60  # 1 minute cooldown for backtesting (prevents duplicate signals)
 
   # Risk/Reward with 50x leverage, $100 margin = $5,000 notional
   # Target: $7-10 total loss INCLUDING fees
-  # With ~$5 in fees per round trip, SL should create ~$5 gross loss
-  btc_risk_points: 100.0    # ~100 BTC points SL for ~$5 gross + $5 fees = $10 total
-  btc_target_points: 200.0  # ~200 BTC points TP for ~$10 target (2:1 R/R)
+  # With ~$4 in fees per round trip (0.04% × $5000 × 2), SL should create ~$6 gross loss
+  btc_risk_points: 100.0    # ~100 BTC points SL for ~$6 gross + $4 fees = $10 total
+  btc_target_points: 200.0  # ~200 BTC points TP for ~$12 target (2:1 R/R)
   eth_risk_points: 10.0     # ETH stop loss
   eth_target_points: 20.0   # ETH take profit
 
