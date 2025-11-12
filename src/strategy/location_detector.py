@@ -90,6 +90,35 @@ class LocationDetector:
         - location_score: Score for CLC engine (0-100)
         """
 
+        # Check cache (S/R zones don't change every candle, cache for performance)
+        import time
+        cache_key = symbol
+        current_time = time.time()
+
+        if cache_key in self.zone_cache:
+            cached_data, cached_time = self.zone_cache[cache_key]
+            # Cache S/R zones for 5 minutes (zones don't change much in 5min)
+            if current_time - cached_time < 300:  # 5 minutes = 300 seconds
+                # Still use cached zones, just update proximity check for current price
+                cached_zones = cached_data['consolidated_zones']
+                at_location, best_zone, location_score = self._check_at_location(
+                    cached_zones, current_price
+                )
+
+                # Get MTF zones (these are cheaper to compute)
+                mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
+
+                return {
+                    'all_zones': cached_zones,
+                    'at_location': at_location,
+                    'best_zone': best_zone,
+                    'location_score': location_score,
+                    'vwap_15m': cached_data.get('vwap_15m'),
+                    'ema_levels': cached_data.get('ema_levels', {}),
+                    'sr_zones': cached_zones,
+                    'mtf_sr_zones': mtf_zones
+                }
+
         all_zones = []
 
         # Method 1: Frequency-based (swing highs/lows)
@@ -138,7 +167,7 @@ class LocationDetector:
         # Get multi-timeframe S/R zones (5min and 15min)
         mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
 
-        return {
+        result = {
             'all_zones': final_zones,
             'at_location': at_location,
             'best_zone': best_zone,
@@ -149,6 +178,16 @@ class LocationDetector:
             'sr_zones': final_zones,  # For backward compatibility
             'mtf_sr_zones': mtf_zones  # 5min and 15min S/R zones for mean reversion
         }
+
+        # Cache the results (zones are expensive to compute, cache for 5 minutes)
+        cache_data = {
+            'consolidated_zones': final_zones,
+            'vwap_15m': vwap_data.get('vwap'),
+            'ema_levels': ema_data
+        }
+        self.zone_cache[cache_key] = (cache_data, current_time)
+
+        return result
 
     async def _detect_frequency_based(self, symbol: str) -> List[SRZone]:
         """Method 1: Detect S/R from swing highs/lows"""
