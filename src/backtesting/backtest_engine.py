@@ -1356,4 +1356,147 @@ class BacktestEngine:
         equity_df = pd.DataFrame(self.equity_curve, columns=['timestamp', 'balance'])
         equity_df.to_csv(results_dir / f'equity_{timestamp}.csv', index=False)
 
+        # Save detailed trade analysis text file
+        self._save_detailed_trade_analysis(results_dir, timestamp, metrics)
+
         logger.info(f"[BACKTEST] Results saved to {results_dir}")
+
+    def _save_detailed_trade_analysis(self, results_dir: Path, timestamp: int, metrics: BacktestMetrics):
+        """Save detailed human-readable trade analysis to text file"""
+
+        analysis_file = results_dir / f'trade_analysis_{timestamp}.txt'
+
+        with open(analysis_file, 'w', encoding='utf-8') as f:
+            f.write("=" * 100 + "\n")
+            f.write("DETAILED BACKTEST TRADE ANALYSIS\n")
+            f.write("=" * 100 + "\n\n")
+
+            # Summary Statistics
+            f.write("SUMMARY STATISTICS\n")
+            f.write("-" * 100 + "\n")
+            f.write(f"Starting Balance:        ${self.starting_balance:.2f}\n")
+            f.write(f"Ending Balance:          ${self.current_balance:.2f}\n")
+            f.write(f"Net P&L:                 ${metrics.net_pnl:+.2f}\n")
+            f.write(f"ROI:                     {metrics.roi_pct:+.2f}%\n")
+            f.write(f"Total Trades:            {metrics.total_trades}\n")
+            f.write(f"Winning Trades:          {metrics.winning_trades}\n")
+            f.write(f"Losing Trades:           {metrics.losing_trades}\n")
+            f.write(f"Win Rate:                {metrics.win_rate:.2f}%\n")
+            f.write(f"Average Win:             ${metrics.avg_win:.2f}\n")
+            f.write(f"Average Loss:            ${metrics.avg_loss:.2f}\n")
+            f.write(f"Largest Win:             ${metrics.largest_win:.2f}\n")
+            f.write(f"Largest Loss:            ${metrics.largest_loss:.2f}\n")
+            f.write(f"Profit Factor:           {metrics.profit_factor:.2f}\n")
+            f.write(f"Expectancy per Trade:    ${metrics.expectancy:.2f}\n")
+            f.write(f"Risk/Reward Ratio:       {metrics.avg_risk_reward:.2f}\n")
+            f.write(f"Max Drawdown:            ${metrics.max_drawdown:.2f} ({metrics.max_drawdown_pct:.2f}%)\n")
+            f.write(f"Max Consecutive Losses:  {metrics.max_consecutive_losses}\n")
+            f.write(f"Sharpe Ratio:            {metrics.sharpe_ratio:.2f}\n")
+            f.write(f"Avg Trade Duration:      {metrics.avg_trade_duration_minutes:.1f} minutes\n")
+            f.write(f"Trades per Day:          {metrics.trades_per_day:.2f}\n")
+            f.write(f"Total Fees:              ${metrics.total_fees:.2f}\n")
+            f.write(f"\nLONG Trades:             {metrics.long_trades} (Win Rate: {metrics.long_win_rate:.2f}%)\n")
+            f.write(f"SHORT Trades:            {metrics.short_trades} (Win Rate: {metrics.short_win_rate:.2f}%)\n")
+            f.write("\n" + "=" * 100 + "\n\n")
+
+            # Per-Trade Analysis
+            f.write("PER-TRADE DETAILED ANALYSIS\n")
+            f.write("=" * 100 + "\n\n")
+
+            for idx, trade in enumerate(self.closed_trades, 1):
+                entry_time = datetime.fromtimestamp(trade['entry_time'] / 1000, tz=timezone.utc)
+                exit_time = datetime.fromtimestamp(trade['exit_time'] / 1000, tz=timezone.utc)
+                duration_mins = (trade['exit_time'] - trade['entry_time']) / 60000
+
+                pnl = trade['net_pnl']
+                pnl_symbol = "WIN" if pnl > 0 else "LOSS"
+
+                f.write(f"Trade #{idx} - {pnl_symbol} {trade['direction']}\n")
+                f.write("-" * 100 + "\n")
+                f.write(f"Entry Time:              {entry_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+                f.write(f"Exit Time:               {exit_time.strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
+                f.write(f"Duration:                {duration_mins:.1f} minutes ({duration_mins/60:.1f} hours)\n")
+                f.write(f"Entry Price:             ${trade['entry_price']:.2f}\n")
+                f.write(f"Exit Price:              ${trade['exit_price']:.2f}\n")
+                f.write(f"Exit Reason:             {trade['exit_reason']}\n")
+                f.write(f"Quantity:                {trade['quantity']:.6f}\n")
+                f.write(f"Notional Value:          ${trade['notional_value']:.2f}\n")
+                f.write(f"Leverage:                {trade['leverage']}x\n")
+                f.write(f"Initial Margin:          ${trade['initial_margin']:.2f}\n")
+                f.write(f"Gross P&L:               ${trade['pnl']:+.2f}\n")
+                f.write(f"Entry Fee:               ${trade['entry_fee']:.2f} ({'MAKER' if trade['used_limit_order'] else 'TAKER'})\n")
+                f.write(f"Exit Fee:                ${trade['exit_fee']:.2f} (TAKER)\n")
+                f.write(f"Total Fees:              ${trade['fees']:.2f}\n")
+                f.write(f"Net P&L:                 ${pnl:+.2f}\n")
+                f.write(f"P&L %:                   {trade['pnl_pct']:+.2f}% (on notional)\n")
+                f.write(f"ROE %:                   {trade['roe_pct']:+.2f}% (return on margin)\n")
+
+                # Extract CLC score details if available
+                if isinstance(trade['clc_score'], CLCScore):
+                    score = trade['clc_score']
+                    f.write(f"\nEntry Score Breakdown:\n")
+                    f.write(f"  Total Score:           {score.total_score:.1f}\n")
+                    f.write(f"  Context Score:         {score.context_score:.1f}\n")
+                    f.write(f"  Location Score:        {score.location_score:.1f}\n")
+                    f.write(f"  Confirmation Score:    {score.confirmation_score:.1f}\n")
+                    f.write(f"  Big Orders Score:      {score.big_orders_score:.1f}\n")
+                    f.write(f"  At Location:           {score.at_location}\n")
+                    f.write(f"  Location Type:         {score.location_type}\n")
+                    f.write(f"  Confirmation Signals:  {', '.join(score.confirmation_signals) if score.confirmation_signals else 'None'}\n")
+                    f.write(f"  Big Orders Detected:   {', '.join(score.big_orders_detected) if score.big_orders_detected else 'None'}\n")
+                    f.write(f"  Entry Reasons:         {', '.join(score.reasons) if score.reasons else 'N/A'}\n")
+                    if score.warnings:
+                        f.write(f"  Warnings:              {', '.join(score.warnings)}\n")
+
+                f.write("\n" + "=" * 100 + "\n\n")
+
+            # Analysis by outcome
+            f.write("TRADE OUTCOME ANALYSIS\n")
+            f.write("=" * 100 + "\n\n")
+
+            winning_trades = [t for t in self.closed_trades if t['net_pnl'] > 0]
+            losing_trades = [t for t in self.closed_trades if t['net_pnl'] <= 0]
+
+            if winning_trades:
+                f.write(f"WINNING TRADES ({len(winning_trades)}):\n")
+                f.write("-" * 100 + "\n")
+                for idx, trade in enumerate(winning_trades, 1):
+                    entry_time = datetime.fromtimestamp(trade['entry_time'] / 1000, tz=timezone.utc)
+                    f.write(f"  {idx}. {trade['direction']} @ ${trade['entry_price']:.2f} → ${trade['exit_price']:.2f} | "
+                           f"P&L: ${trade['net_pnl']:+.2f} | {trade['exit_reason']} | {entry_time.strftime('%m/%d %H:%M')}\n")
+                f.write("\n")
+
+            if losing_trades:
+                f.write(f"LOSING TRADES ({len(losing_trades)}):\n")
+                f.write("-" * 100 + "\n")
+                for idx, trade in enumerate(losing_trades, 1):
+                    entry_time = datetime.fromtimestamp(trade['entry_time'] / 1000, tz=timezone.utc)
+                    f.write(f"  {idx}. {trade['direction']} @ ${trade['entry_price']:.2f} → ${trade['exit_price']:.2f} | "
+                           f"P&L: ${trade['net_pnl']:+.2f} | {trade['exit_reason']} | {entry_time.strftime('%m/%d %H:%M')}\n")
+                f.write("\n")
+
+            # Exit reason breakdown
+            f.write("EXIT REASON BREAKDOWN\n")
+            f.write("-" * 100 + "\n")
+            exit_reasons = {}
+            for trade in self.closed_trades:
+                reason = trade['exit_reason']
+                if reason not in exit_reasons:
+                    exit_reasons[reason] = {'count': 0, 'wins': 0, 'total_pnl': 0}
+                exit_reasons[reason]['count'] += 1
+                if trade['net_pnl'] > 0:
+                    exit_reasons[reason]['wins'] += 1
+                exit_reasons[reason]['total_pnl'] += trade['net_pnl']
+
+            for reason, stats in sorted(exit_reasons.items(), key=lambda x: x[1]['count'], reverse=True):
+                win_rate = (stats['wins'] / stats['count']) * 100 if stats['count'] > 0 else 0
+                f.write(f"  {reason:20s}: {stats['count']:3d} trades ({win_rate:5.1f}% win rate) | "
+                       f"Total P&L: ${stats['total_pnl']:+.2f}\n")
+
+            f.write("\n" + "=" * 100 + "\n")
+            f.write("END OF ANALYSIS\n")
+            f.write("=" * 100 + "\n")
+
+        logger.info(f"[BACKTEST] Detailed trade analysis saved to {analysis_file}")
+        print(f"\n[INFO] Detailed trade analysis saved to: {analysis_file}")
+        print(f"[INFO] You can paste this file content for review\n")

@@ -573,10 +573,19 @@ class TradeDashboard:
             direction = trade['direction']
 
             # Get cached klines from backtest
-            if symbol not in self.klines_cache or '1m' not in self.klines_cache[symbol]:
-                return "<p>No cached data available for chart</p>"
+            logger.debug(f"[CHART] Generating chart for trade #{trade_num}: {symbol}")
+            logger.debug(f"[CHART] klines_cache symbols: {list(self.klines_cache.keys())}")
+
+            if symbol not in self.klines_cache:
+                logger.error(f"[CHART] {symbol} not in klines_cache. Available: {list(self.klines_cache.keys())}")
+                return f"<p style='padding:20px;'>No cached data available for {symbol}. Available symbols: {list(self.klines_cache.keys())}</p>"
+
+            if '1m' not in self.klines_cache[symbol]:
+                logger.error(f"[CHART] '1m' not in klines_cache[{symbol}]. Available timeframes: {list(self.klines_cache[symbol].keys())}")
+                return f"<p style='padding:20px;'>1m timeframe not cached. Available: {list(self.klines_cache[symbol].keys())}</p>"
 
             all_klines = self.klines_cache[symbol]['1m']
+            logger.debug(f"[CHART] Found {len(all_klines)} 1m klines for {symbol}")
 
             # Extract 4 hours around entry (2 hours before/after)
             lookback_candles = 120  # 2 hours in 1m candles
