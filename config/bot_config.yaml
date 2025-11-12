@@ -75,8 +75,8 @@ regime_detection:
 adaptive_exits:
   # Trail winners past TP when trade is going strong
   trail_past_tp: true
-  trail_activation_multiple: 1.2  # Start trailing when P&L > 1.2x target
-  trail_distance_pct: 0.005  # Trail by 0.5% from highest profit
+  trail_activation_multiple: 1.0  # Start trailing immediately when P&L >= target (was 1.2)
+  trail_distance_pct: 0.003  # Trail by 0.3% from highest profit (was 0.5%, tighter now)
 
   # Exit losers early before full SL hit
   early_exit_enabled: true
