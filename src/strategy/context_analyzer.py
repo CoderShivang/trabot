@@ -146,11 +146,17 @@ class ContextAnalyzer:
 
         # Smooth the TR, +DM, -DM using Wilder's smoothing (exponential moving average)
         atr = tr.ewm(alpha=1/period, adjust=False).mean()
-        plus_di = 100 * (plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
-        minus_di = 100 * (minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr)
 
-        # Calculate DX and ADX
-        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
+        # Avoid division by zero - replace zero ATR values with small number
+        atr_safe = atr.replace(0, 1e-10)
+
+        plus_di = 100 * (plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr_safe)
+        minus_di = 100 * (minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr_safe)
+
+        # Calculate DX and ADX - avoid division by zero
+        di_sum = plus_di + minus_di
+        di_sum_safe = di_sum.replace(0, 1e-10)
+        dx = 100 * (plus_di - minus_di).abs() / di_sum_safe
         adx = dx.ewm(alpha=1/period, adjust=False).mean().iloc[-1]
 
         return float(adx) if not pd.isna(adx) else 0.0
