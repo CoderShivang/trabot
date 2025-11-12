@@ -50,7 +50,7 @@ clc_strategy:
     mtf_sr_lookback: 200  # Bars to look back on 5m/15m for S/R detection
     mtf_sr_min_touches: 2  # Min touches for 5m/15m S/R validity
   confirmation:
-    min_signals_required: 2  # Raised from 0 - require 2+ signals for quality (was too lenient)
+    min_signals_required: 1  # Lowered from 2 for backtesting (simulated orderbook has fewer signals)
     imbalance_threshold: 0.55  # Lowered for simulated data (balanced orderbook ≈ 0.5)
     delta_threshold: 0.52  # Lowered for simulated data
     absorption_min_refills: 3
@@ -100,7 +100,7 @@ adaptive_exits:
   partial_tp_at_target: 0.5  # Take 50% profit at initial TP
   partial_tp_percentage: 0.5  # Close 50% of position
 scoring:
-  min_entry_score: 30.0  # Raised from 20 - only top 20% of setups (was too low before)
+  min_entry_score: 25.0  # Lowered from 30 for backtesting (scores ranged 19-34, need more samples)
   context_weight: 0.25      # 25% weight for trend/bias context
   location_weight: 0.40     # 40% weight for S/R location
   confirmation_weight: 0.25 # 25% weight for orderflow confirmation

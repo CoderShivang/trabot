@@ -22,14 +22,15 @@ async def main():
 
     config = load_config()
 
-    # Short 6-hour test period
-    end_date = datetime(2025, 11, 12, 6, 0, 0, tzinfo=timezone.utc)
-    start_date = datetime(2025, 11, 12, 0, 0, 0, tzinfo=timezone.utc)
+    # Use historical data from January 2025 (known volatile period with clear trends)
+    end_date = datetime(2025, 1, 10, 12, 0, 0, tzinfo=timezone.utc)
+    start_date = datetime(2025, 1, 10, 0, 0, 0, tzinfo=timezone.utc)
 
     print("\n" + "=" * 80)
     print("DIAGNOSTIC BACKTEST - See why trades are rejected")
     print("=" * 80)
-    print(f"Period: {start_date} to {end_date} (6 hours = 360 candles)")
+    print(f"Period: {start_date} to {end_date} (12 hours = 720 candles)")
+    print("Using historical data from January 2025")
     print("=" * 80)
     print("\nWill show:")
     print("  - Scores for each evaluation")
