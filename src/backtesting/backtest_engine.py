@@ -149,6 +149,7 @@ class BacktestEngine:
         self.closed_trades: List[Dict] = []
         self.equity_curve: List[Tuple[int, float]] = []
         self.daily_pnl = 0.0
+        self.current_day = None  # Track current day for daily P&L reset
         self.consecutive_losses = 0
         self.consecutive_wins = 0
         self.max_consecutive_losses = 0
@@ -269,6 +270,16 @@ class BacktestEngine:
             volume = float(kline[5])
 
             current_time = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+
+            # Reset daily P&L at the start of each new day (UTC midnight)
+            current_day = current_time.date()
+            if self.current_day is None:
+                self.current_day = current_day
+            elif current_day != self.current_day:
+                # New day started - reset daily P&L
+                logger.debug(f"[BACKTEST] New day {current_day}, resetting daily P&L from ${self.daily_pnl:.2f} to $0.00")
+                self.daily_pnl = 0.0
+                self.current_day = current_day
 
             # Update context analyzer's current timestamp for this candle
             # This ensures indicators (ADX, ATR, etc.) are calculated from historical data up to this point
@@ -669,9 +680,11 @@ class BacktestEngine:
         if total_exposure >= self.config.trading.max_positions:
             return False
 
-        # Daily loss limit hit
-        if self.daily_pnl <= -self.config.risk.max_daily_loss_usdt:
-            return False
+        # Daily loss limit hit (disabled for backtesting - we want to evaluate algorithm regardless of losses)
+        # Note: Daily P&L still resets each day, but doesn't block trading
+        # Uncomment this line to enable daily loss limits:
+        # if self.daily_pnl <= -self.config.risk.max_daily_loss_usdt:
+        #     return False
 
         # Cooldown between trades
         last_trade = self.last_trade_time.get(symbol, 0)
