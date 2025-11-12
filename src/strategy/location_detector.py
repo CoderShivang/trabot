@@ -68,6 +68,17 @@ class LocationDetector:
         self.zone_cache = {}  # Cache for performance
         self.klines_cache = klines_cache or {}  # Cached klines from backtest
 
+    async def _get_klines(self, symbol: str, interval: str, limit: int):
+        """Get klines from cache if available (backtest), otherwise fetch from API (live)"""
+        # Check cache first (backtest mode)
+        if symbol in self.klines_cache and interval in self.klines_cache[symbol]:
+            cached = self.klines_cache[symbol][interval]
+            # Return last N candles from cache
+            return cached[-limit:] if len(cached) > limit else cached
+
+        # Fallback to API (live mode)
+        return await self.client.get_klines(symbol, interval, limit)
+
     async def get_all_locations(self, symbol: str, current_price: float) -> Dict:
         """
         Detect all S/R zones using 6 methods, then consolidate with confluence scoring.
@@ -120,7 +131,7 @@ class LocationDetector:
         )
 
         # Also get VWAP and EMA levels for additional context
-        klines = await self.client.get_klines(symbol, '15m', 200)
+        klines = await self._get_klines(symbol, '15m', 200)
         vwap_data = self._calculate_vwap_levels(klines) if klines else {}
         ema_data = self._calculate_ema_levels(klines) if klines else {}
 
@@ -142,7 +153,7 @@ class LocationDetector:
     async def _detect_frequency_based(self, symbol: str) -> List[SRZone]:
         """Method 1: Detect S/R from swing highs/lows"""
 
-        klines = await self.client.get_klines(symbol, '15m', 500)
+        klines = await self._get_klines(symbol, '15m', 500)
         if not klines:
             return []
 
@@ -183,7 +194,7 @@ class LocationDetector:
     async def _detect_volume_profile(self, symbol: str) -> List[SRZone]:
         """Method 2: Detect S/R from volume profile (POC, high volume nodes)"""
 
-        klines = await self.client.get_klines(symbol, '15m', 200)
+        klines = await self._get_klines(symbol, '15m', 200)
         if not klines:
             return []
 
@@ -235,7 +246,7 @@ class LocationDetector:
     async def _detect_liquidity_levels(self, symbol: str, current_price: float) -> List[SRZone]:
         """Method 3: Detect where stop-loss clusters likely are (liquidity pools)"""
 
-        klines = await self.client.get_klines(symbol, '15m', 100)
+        klines = await self._get_klines(symbol, '15m', 100)
         if not klines:
             return []
 
@@ -286,7 +297,7 @@ class LocationDetector:
     async def _detect_fibonacci_levels(self, symbol: str, current_price: float) -> List[SRZone]:
         """Method 4: Calculate Fibonacci retracement levels from recent swing"""
 
-        klines = await self.client.get_klines(symbol, '1h', 100)
+        klines = await self._get_klines(symbol, '1h', 100)
         if not klines:
             return []
 
@@ -615,24 +626,14 @@ class LocationDetector:
 
         # Detect 5min S/R zones
         if self.config.clc_strategy.location.use_5min_sr:
-            # Use cached klines if available (backtest mode), otherwise fetch from API
-            if symbol in self.klines_cache and '5m' in self.klines_cache[symbol]:
-                klines_5m = self.klines_cache[symbol]['5m'][-lookback:]  # Get last N candles
-            else:
-                klines_5m = await self.client.get_klines(symbol, '5m', lookback)
-
+            klines_5m = await self._get_klines(symbol, '5m', lookback)
             if klines_5m:
                 zones_5m = self._detect_sr_from_klines(klines_5m, min_touches, timeframe='5m')
                 mtf_zones['5m'] = zones_5m
 
         # Detect 15min S/R zones
         if self.config.clc_strategy.location.use_15min_sr:
-            # Use cached klines if available (backtest mode), otherwise fetch from API
-            if symbol in self.klines_cache and '15m' in self.klines_cache[symbol]:
-                klines_15m = self.klines_cache[symbol]['15m'][-lookback:]  # Get last N candles
-            else:
-                klines_15m = await self.client.get_klines(symbol, '15m', lookback)
-
+            klines_15m = await self._get_klines(symbol, '15m', lookback)
             if klines_15m:
                 zones_15m = self._detect_sr_from_klines(klines_15m, min_touches, timeframe='15m')
                 mtf_zones['15m'] = zones_15m
