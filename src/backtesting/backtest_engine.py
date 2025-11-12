@@ -369,6 +369,45 @@ class BacktestEngine:
         self.binance_client.set_backtest_cache(self.klines_cache)
         logger.info("[BACKTEST] ✓ Cached data loaded successfully")
 
+    def _save_data_cache(
+        self,
+        symbol: str,
+        start_date: datetime,
+        end_date: datetime
+    ):
+        """Save fetched data to cache for faster subsequent runs"""
+        cache_dir = Path("data/cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+
+        cache_filename = f"{symbol}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.json"
+        cache_path = cache_dir / cache_filename
+
+        # Check if cache already exists
+        if cache_path.exists():
+            logger.debug(f"[BACKTEST] Cache file already exists: {cache_filename}")
+            return
+
+        logger.info(f"[BACKTEST] Saving data to cache: {cache_filename}")
+
+        cache_data = {
+            'symbol': symbol,
+            'start_date': start_date.isoformat(),
+            'end_date': end_date.isoformat(),
+            'timeframes': {}
+        }
+
+        # Save all timeframes
+        if symbol in self.klines_cache:
+            for tf, klines in self.klines_cache[symbol].items():
+                cache_data['timeframes'][tf] = klines
+                logger.debug(f"[BACKTEST] Caching {len(klines)} {tf} candles")
+
+        with open(cache_path, 'w') as f:
+            json.dump(cache_data, f)
+
+        logger.info(f"[BACKTEST] ✓ Data cached successfully! Next run will be 50-100x faster.")
+        logger.info(f"[BACKTEST] Cache file: {cache_path}")
+
     async def _load_historical_data(
         self,
         symbol: str,
@@ -378,10 +417,24 @@ class BacktestEngine:
     ):
         """Load historical klines and trades from Binance or cache"""
 
-        # In offline mode, load from cache
-        if self.offline_mode:
+        # Check if cache exists (auto-caching for faster subsequent runs)
+        cache_dir = Path("data/cache")
+        cache_filename = f"{symbol}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}.json"
+        cache_path = cache_dir / cache_filename
+
+        if cache_path.exists():
+            logger.info(f"[BACKTEST] Cache found! Loading from {cache_filename} (50-100x faster than API)")
             self._load_cached_data(symbol, start_date, end_date)
             return
+
+        # In offline mode but no cache, error out
+        if self.offline_mode:
+            logger.error(f"[BACKTEST] Offline mode but cache not found: {cache_path}")
+            self._load_cached_data(symbol, start_date, end_date)  # Will raise error
+            return
+
+        # Online mode: fetch from API
+        logger.info(f"[BACKTEST] No cache found. Fetching from Binance API (this will take ~10 min)...")
 
         # Initialize caches
         if symbol not in self.klines_cache:
@@ -474,6 +527,9 @@ class BacktestEngine:
                     logger.error(f"[BACKTEST] Error loading {tf} klines: {e}")
 
         logger.info(f"[BACKTEST] Loaded {len(all_klines)} {timeframe} candles")
+
+        # Save data to cache for faster subsequent runs
+        self._save_data_cache(symbol, start_date, end_date)
 
         # Inject cache into binance_client to prevent live API calls during backtest
         self.binance_client.set_backtest_cache(self.klines_cache)
