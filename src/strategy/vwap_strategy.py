@@ -1,0 +1,484 @@
+"""
+VWAP + S/R Strategy for 1-Minute Scalping
+
+Based on user's trading approach:
+1. Session-based VWAP with ±1σ and ±2σ bands
+2. S/R zones from consolidation (white boxes in charts)
+3. Mean reversion trades at VWAP bands + S/R confluence
+4. Trend continuation on pullbacks to bands
+5. All orders are LIMIT orders (lower fees)
+
+Entry Types:
+- LONG: -1σ + support (mean reversion) OR pullback to +1σ in uptrend
+- SHORT: +1σ + resistance (mean reversion) OR pullback to -1σ in downtrend
+"""
+
+import numpy as np
+import pandas as pd
+from typing import List, Optional, Dict, Tuple
+from dataclasses import dataclass
+from src.utils.logger import setup_logger
+
+logger = setup_logger(__name__)
+
+
+@dataclass
+class VWAPBands:
+    """VWAP with standard deviation bands"""
+    vwap: float
+    std: float
+    upper_1std: float
+    lower_1std: float
+    upper_2std: float
+    lower_2std: float
+
+    def distance_to_band(self, price: float, band: str) -> float:
+        """Calculate distance from price to band in dollars"""
+        bands = {
+            'vwap': self.vwap,
+            'upper_1std': self.upper_1std,
+            'lower_1std': self.lower_1std,
+            'upper_2std': self.upper_2std,
+            'lower_2std': self.lower_2std
+        }
+        return abs(price - bands[band])
+
+
+@dataclass
+class SRZone:
+    """Support/Resistance Zone from consolidation"""
+    level: float  # Center price
+    upper: float  # Upper boundary
+    lower: float  # Lower boundary
+    zone_type: str  # 'support', 'resistance', 'both'
+    strength: int  # 0-100 quality score
+    touches: int  # Number of touches
+    first_touch_idx: int
+    last_touch_idx: int
+
+    def is_near(self, price: float, threshold: float = 150) -> bool:
+        """Check if price is near this zone"""
+        return abs(price - self.level) <= threshold
+
+    def contains(self, price: float) -> bool:
+        """Check if price is within zone boundaries"""
+        return self.lower <= price <= self.upper
+
+
+@dataclass
+class TradeSignal:
+    """Trade entry signal"""
+    direction: str  # 'LONG' or 'SHORT'
+    signal_type: str  # 'mean_reversion' or 'trend_continuation'
+    entry_price: float  # Limit order price
+    stop_loss: float
+    take_profit: float
+    confidence: float  # 0-100
+    reason: str  # Human-readable explanation
+    vwap_band: float
+    sr_zone: Optional[SRZone]
+
+
+class VWAPCalculator:
+    """Session-based VWAP calculator"""
+
+    def calculate(self, df: pd.DataFrame) -> VWAPBands:
+        """
+        Calculate VWAP bands for current session
+        Uses intraday data (resets daily)
+        """
+        if len(df) < 10:
+            raise ValueError("Insufficient data for VWAP calculation")
+
+        # Use session data (today's bars)
+        df = df.copy()
+
+        # Calculate typical price
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+
+        # VWAP = cumulative(price * volume) / cumulative(volume)
+        cumulative_pv = (typical_price * df['volume']).cumsum()
+        cumulative_volume = df['volume'].cumsum()
+
+        # Use last value as current VWAP
+        vwap = float(cumulative_pv.iloc[-1] / cumulative_volume.iloc[-1])
+
+        # Calculate standard deviation
+        squared_diff = (typical_price - vwap) ** 2
+        variance = (squared_diff * df['volume']).sum() / df['volume'].sum()
+        std = float(np.sqrt(variance))
+
+        return VWAPBands(
+            vwap=vwap,
+            std=std,
+            upper_1std=vwap + std,
+            lower_1std=vwap - std,
+            upper_2std=vwap + (std * 2),
+            lower_2std=vwap - (std * 2)
+        )
+
+
+class SimpleConsolidationDetector:
+    """
+    Detects S/R zones from consolidation periods
+    Based on user's chart examples (white boxes)
+    """
+
+    def __init__(self, min_bars: int = 20, max_range_pct: float = 0.015):
+        self.min_bars = min_bars
+        self.max_range_pct = max_range_pct
+
+    def detect_zones(self, df: pd.DataFrame, lookback: int = 200) -> List[SRZone]:
+        """
+        Detect S/R zones from price consolidations
+
+        Args:
+            df: OHLCV DataFrame
+            lookback: How many bars to analyze
+
+        Returns:
+            List of SRZone objects
+        """
+        if len(df) < self.min_bars:
+            return []
+
+        # Use recent data
+        recent_df = df.tail(lookback).copy()
+        recent_df.reset_index(drop=True, inplace=True)
+
+        # Find consolidation periods
+        consolidations = self._find_consolidations(recent_df)
+
+        # Extract zones from consolidations
+        zones = []
+        for start, end in consolidations:
+            zone = self._extract_zone(recent_df, start, end)
+            if zone:
+                zones.append(zone)
+
+        # Merge overlapping zones
+        zones = self._merge_zones(zones)
+
+        logger.debug(f"[VWAP-SR] Detected {len(zones)} consolidation zones")
+
+        return zones
+
+    def _find_consolidations(self, df: pd.DataFrame) -> List[Tuple[int, int]]:
+        """Find consolidation periods (tight ranges)"""
+        consolidations = []
+        i = 0
+
+        while i < len(df) - self.min_bars:
+            window = df.iloc[i:i+self.min_bars]
+
+            high = window['high'].max()
+            low = window['low'].min()
+            mid = (high + low) / 2
+            range_pct = (high - low) / mid
+
+            # Check if range is tight enough
+            if range_pct <= self.max_range_pct:
+                # Extend consolidation forward
+                end = i + self.min_bars
+
+                while end < len(df):
+                    extended = df.iloc[i:end+1]
+                    ext_high = extended['high'].max()
+                    ext_low = extended['low'].min()
+                    ext_mid = (ext_high + ext_low) / 2
+                    ext_range = (ext_high - ext_low) / ext_mid
+
+                    if ext_range <= self.max_range_pct * 1.3:
+                        end += 1
+                    else:
+                        break
+
+                if end - i >= self.min_bars:
+                    consolidations.append((i, end))
+                    i = end
+                    continue
+
+            i += 1
+
+        return consolidations
+
+    def _extract_zone(self, df: pd.DataFrame, start: int, end: int) -> Optional[SRZone]:
+        """Extract S/R zone from consolidation period"""
+        window = df.iloc[start:end]
+
+        if len(window) < self.min_bars:
+            return None
+
+        # Calculate zone boundaries
+        upper = float(window['high'].quantile(0.75))
+        lower = float(window['low'].quantile(0.25))
+        level = (upper + lower) / 2
+
+        # Count touches
+        touches = 0
+        for _, row in window.iterrows():
+            if lower <= row['low'] <= upper or lower <= row['high'] <= upper:
+                touches += 1
+
+        if touches < 3:  # Need at least 3 touches
+            return None
+
+        # Determine zone type based on position
+        close_prices = window['close']
+        if close_prices.mean() < level:
+            zone_type = 'resistance'
+        elif close_prices.mean() > level:
+            zone_type = 'support'
+        else:
+            zone_type = 'both'
+
+        # Calculate strength
+        strength = min(100, int((touches / len(window)) * 100 + (end - start) / 2))
+
+        return SRZone(
+            level=level,
+            upper=upper,
+            lower=lower,
+            zone_type=zone_type,
+            strength=strength,
+            touches=touches,
+            first_touch_idx=start,
+            last_touch_idx=end
+        )
+
+    def _merge_zones(self, zones: List[SRZone]) -> List[SRZone]:
+        """Merge overlapping zones"""
+        if not zones:
+            return []
+
+        zones = sorted(zones, key=lambda z: z.level)
+        merged = [zones[0]]
+
+        for zone in zones[1:]:
+            last = merged[-1]
+
+            # Check for overlap
+            if abs(zone.level - last.level) / last.level < 0.005:  # Within 0.5%
+                # Merge
+                merged[-1] = SRZone(
+                    level=(last.level + zone.level) / 2,
+                    upper=max(last.upper, zone.upper),
+                    lower=min(last.lower, zone.lower),
+                    zone_type=last.zone_type if last.strength >= zone.strength else zone.zone_type,
+                    strength=max(last.strength, zone.strength),
+                    touches=last.touches + zone.touches,
+                    first_touch_idx=min(last.first_touch_idx, zone.first_touch_idx),
+                    last_touch_idx=max(last.last_touch_idx, zone.last_touch_idx)
+                )
+            else:
+                merged.append(zone)
+
+        return merged
+
+
+class VWAPStrategy:
+    """
+    VWAP + S/R Strategy
+
+    Trading Rules:
+    1. Mean Reversion LONG: Price near -1σ + at support zone
+    2. Mean Reversion SHORT: Price near +1σ + at resistance zone
+    3. Trend Continuation LONG: Price > all bands, pullback to +1σ
+    4. Trend Continuation SHORT: Price < all bands, pullback to -1σ
+    """
+
+    def __init__(self, config=None):
+        self.config = config or {}
+
+        # Components
+        self.vwap_calc = VWAPCalculator()
+        self.sr_detector = SimpleConsolidationDetector()
+
+        # Parameters (can be tuned)
+        self.target_points = self.config.get('target_points', 200)  # TP in dollars
+        self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
+        self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
+        self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
+        self.min_zone_strength = self.config.get('min_zone_strength', 60)  # Min zone quality
+
+        # State
+        self.current_zones = []
+
+    def analyze(self, df: pd.DataFrame, current_price: float) -> List[TradeSignal]:
+        """
+        Analyze market and find trade setups
+
+        Args:
+            df: OHLCV DataFrame with recent candles
+            current_price: Current market price
+
+        Returns:
+            List of TradeSignal objects (sorted by confidence)
+        """
+        if len(df) < 50:
+            logger.warning("[VWAP] Insufficient data for analysis")
+            return []
+
+        # Update S/R zones
+        self.current_zones = self.sr_detector.detect_zones(df)
+        strong_zones = [z for z in self.current_zones if z.strength >= self.min_zone_strength]
+
+        # Calculate VWAP
+        try:
+            vwap = self.vwap_calc.calculate(df)
+        except ValueError as e:
+            logger.error(f"[VWAP] Error calculating VWAP: {e}")
+            return []
+
+        # Determine market bias
+        bias = self._determine_bias(current_price, vwap)
+
+        # Find trade setups
+        signals = []
+
+        # === LONG SETUPS ===
+
+        # 1. Mean Reversion Long: -1σ + Support
+        if bias in ['bullish_mean_reversion', 'neutral']:
+            dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
+
+            if dist_to_lower <= self.band_proximity:
+                for zone in strong_zones:
+                    if zone.zone_type in ['support', 'both'] and zone.is_near(current_price, self.zone_proximity):
+                        confidence = self._calculate_confluence(zone, bias, dist_to_lower)
+
+                        if confidence >= 65:
+                            entry = max(zone.level - 30, current_price - 50)
+
+                            signals.append(TradeSignal(
+                                direction='LONG',
+                                signal_type='mean_reversion',
+                                entry_price=entry,
+                                stop_loss=entry - self.stop_points,
+                                take_profit=entry + self.target_points,
+                                confidence=confidence,
+                                reason=f"LONG Mean Reversion: -1σ (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength})",
+                                vwap_band=vwap.lower_1std,
+                                sr_zone=zone
+                            ))
+
+        # 2. Trend Continuation Long: Uptrend + Pullback to +1σ
+        if bias == 'strong_bullish':
+            dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
+
+            if dist_to_upper <= self.band_proximity:
+                for zone in strong_zones:
+                    if zone.is_near(current_price, self.zone_proximity):
+                        confidence = self._calculate_confluence(zone, bias, dist_to_upper)
+
+                        if confidence >= 60:
+                            entry = min(vwap.upper_1std, zone.level) - 20
+
+                            signals.append(TradeSignal(
+                                direction='LONG',
+                                signal_type='trend_continuation',
+                                entry_price=entry,
+                                stop_loss=entry - self.stop_points,
+                                take_profit=entry + self.target_points,
+                                confidence=confidence,
+                                reason=f"LONG Trend: Pullback to +1σ (${vwap.upper_1std:,.0f}) in uptrend",
+                                vwap_band=vwap.upper_1std,
+                                sr_zone=zone
+                            ))
+
+        # === SHORT SETUPS ===
+
+        # 3. Mean Reversion Short: +1σ + Resistance
+        if bias in ['bearish_mean_reversion', 'neutral']:
+            dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
+
+            if dist_to_upper <= self.band_proximity:
+                for zone in strong_zones:
+                    if zone.zone_type in ['resistance', 'both'] and zone.is_near(current_price, self.zone_proximity):
+                        confidence = self._calculate_confluence(zone, bias, dist_to_upper)
+
+                        if confidence >= 65:
+                            entry = min(zone.level + 30, current_price + 50)
+
+                            signals.append(TradeSignal(
+                                direction='SHORT',
+                                signal_type='mean_reversion',
+                                entry_price=entry,
+                                stop_loss=entry + self.stop_points,
+                                take_profit=entry - self.target_points,
+                                confidence=confidence,
+                                reason=f"SHORT Mean Reversion: +1σ (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength})",
+                                vwap_band=vwap.upper_1std,
+                                sr_zone=zone
+                            ))
+
+        # 4. Trend Continuation Short: Downtrend + Pullback to -1σ
+        if bias == 'strong_bearish':
+            dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
+
+            if dist_to_lower <= self.band_proximity:
+                for zone in strong_zones:
+                    if zone.is_near(current_price, self.zone_proximity):
+                        confidence = self._calculate_confluence(zone, bias, dist_to_lower)
+
+                        if confidence >= 60:
+                            entry = max(vwap.lower_1std, zone.level) + 20
+
+                            signals.append(TradeSignal(
+                                direction='SHORT',
+                                signal_type='trend_continuation',
+                                entry_price=entry,
+                                stop_loss=entry + self.stop_points,
+                                take_profit=entry - self.target_points,
+                                confidence=confidence,
+                                reason=f"SHORT Trend: Pullback to -1σ (${vwap.lower_1std:,.0f}) in downtrend",
+                                vwap_band=vwap.lower_1std,
+                                sr_zone=zone
+                            ))
+
+        # Sort by confidence
+        signals.sort(key=lambda s: s.confidence, reverse=True)
+
+        return signals
+
+    def _determine_bias(self, price: float, vwap: VWAPBands) -> str:
+        """Determine market bias from price position relative to VWAP bands"""
+        if price > vwap.upper_1std:
+            return 'strong_bullish'
+        elif price < vwap.lower_1std:
+            return 'strong_bearish'
+        elif vwap.lower_1std <= price <= vwap.vwap:
+            return 'bullish_mean_reversion'
+        elif vwap.vwap <= price <= vwap.upper_1std:
+            return 'bearish_mean_reversion'
+        else:
+            return 'neutral'
+
+    def _calculate_confluence(self, zone: SRZone, bias: str, distance: float) -> float:
+        """
+        Calculate confluence score (0-100)
+
+        Factors:
+        - Zone strength
+        - Distance to zone
+        - Market bias alignment
+        """
+        # Base score from zone strength
+        score = zone.strength * 0.5
+
+        # Distance penalty (closer = better)
+        distance_score = max(0, 30 - (distance / 10))
+        score += distance_score
+
+        # Bias bonus
+        bias_bonus = 0
+        if 'bullish' in bias and zone.zone_type == 'support':
+            bias_bonus = 15
+        elif 'bearish' in bias and zone.zone_type == 'resistance':
+            bias_bonus = 15
+        elif zone.zone_type == 'both':
+            bias_bonus = 10
+
+        score += bias_bonus
+
+        return min(100, score)
