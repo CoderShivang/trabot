@@ -118,8 +118,9 @@ class VWAPBacktestEngine:
         # Fees (limit orders = maker fee)
         self.maker_fee = 0.0002  # 0.02% Binance maker fee
 
-        # Components
-        self.binance_client = BinanceClient(api_key="", api_secret="")  # Read-only
+        # Components - Create minimal config for BinanceClient
+        binance_config = self._create_binance_config()
+        self.binance_client = BinanceClient(binance_config)
         self.strategy = VWAPStrategy(config.get('strategy_params', {}))
 
         # State
@@ -132,6 +133,21 @@ class VWAPBacktestEngine:
         # Results directory
         self.results_dir = Path('data/vwap_backtest')
         self.results_dir.mkdir(parents=True, exist_ok=True)
+
+    def _create_binance_config(self):
+        """Create minimal config object for BinanceClient"""
+        class TradingConfig:
+            def __init__(self, symbols):
+                self.symbols = symbols
+                self.paper_trading = False  # Use mainnet for historical data
+
+        class MinimalConfig:
+            def __init__(self, symbol):
+                self.trading = TradingConfig([symbol])
+                self.api_key = ""  # Read-only, no auth needed for public data
+                self.api_secret = ""
+
+        return MinimalConfig(self.symbol)
 
     async def run(self, start_date: datetime, end_date: datetime):
         """
