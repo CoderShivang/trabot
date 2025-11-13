@@ -29,6 +29,7 @@ from src.data.binance_client import BinanceClient
 from src.strategy.vwap_strategy import VWAPStrategy, TradeSignal
 from src.utils.logger import setup_logger
 from src.visualization.dashboard import VWAPDashboard
+from src.visualization.interactive_dashboard import InteractiveDashboard
 
 logger = setup_logger(__name__)
 
@@ -201,11 +202,21 @@ class VWAPBacktestEngine:
         # Print trade summary
         self._print_trade_summary()
 
-        # Generate dashboard
-        logger.info("\n[DASHBOARD] Generating interactive visualization...")
+        # Generate static HTML dashboard
+        logger.info("\n[DASHBOARD] Generating static HTML visualization...")
         dashboard = VWAPDashboard(results_path, df)
         dashboard_path = dashboard.generate()
-        logger.info(f"[DASHBOARD] Open in browser: file://{Path(dashboard_path).absolute()}")
+        logger.info(f"[DASHBOARD] Static HTML saved to: file://{Path(dashboard_path).absolute()}")
+
+        # Offer interactive dashboard
+        logger.info("\n[INTERACTIVE] To launch interactive dashboard with filtering, run:")
+        logger.info(f"  python -c \"from src.visualization.interactive_dashboard import InteractiveDashboard; import pandas as pd; InteractiveDashboard('{results_path}', pd.read_parquet('data/vwap_backtest/ohlcv_data.parquet')).run()\"")
+        logger.info("\nOr use the launch_interactive_dashboard.py script (see below)")
+
+        # Save OHLCV data for interactive dashboard
+        ohlcv_path = Path(results_path).parent / 'ohlcv_data.parquet'
+        df.to_parquet(ohlcv_path, index=False)
+        logger.debug(f"[DATA] Saved OHLCV data to: {ohlcv_path}")
 
     async def _fetch_historical_data(self, start_date: datetime, end_date: datetime) -> List:
         """Fetch historical klines from Binance mainnet"""

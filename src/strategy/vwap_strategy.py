@@ -339,6 +339,49 @@ class VWAPStrategy:
         # State
         self.current_zones = []
         self._analyze_count = 0  # For periodic logging
+        self._last_regime = None  # Track regime changes
+
+    def _detect_market_regime(self, df: pd.DataFrame, current_price: float) -> str:
+        """
+        Detect if market is range-bound or trending
+
+        Returns: 'ranging', 'trending_up', or 'trending_down'
+        """
+        # Use recent 60 bars (1 hour for 1m chart)
+        recent = df.tail(60)
+
+        if len(recent) < 30:
+            return 'ranging'  # Default to ranging if insufficient data
+
+        # Calculate high/low range
+        period_high = recent['high'].max()
+        period_low = recent['low'].min()
+        range_pct = (period_high - period_low) / period_low
+
+        # Calculate trend using linear regression on closes
+        closes = recent['close'].values
+        x = np.arange(len(closes))
+        slope = np.polyfit(x, closes, 1)[0]
+        slope_pct = (slope * len(closes)) / closes[0]
+
+        # Calculate average candle size (volatility indicator)
+        candle_ranges = (recent['high'] - recent['low']) / recent['close']
+        avg_candle_pct = candle_ranges.mean()
+
+        # Ranging: tight range (<2.5%) AND minimal slope (<1.5%) AND small candles
+        # This identifies consolidation periods like 13 Nov 0:45 to 5:45
+        if range_pct < 0.025 and abs(slope_pct) < 0.015 and avg_candle_pct < 0.008:
+            return 'ranging'
+
+        # Trending: significant slope (>2%) AND wider range (>3%)
+        elif slope_pct > 0.02 and range_pct > 0.03:
+            return 'trending_up'
+        elif slope_pct < -0.02 and range_pct > 0.03:
+            return 'trending_down'
+
+        # Default to ranging if unclear
+        else:
+            return 'ranging'
 
     def analyze(self, df: pd.DataFrame, current_price: float,
                 df_5m: Optional[pd.DataFrame] = None,
@@ -358,6 +401,16 @@ class VWAPStrategy:
         if len(df) < 50:
             logger.warning("[VWAP] Insufficient data for analysis")
             return []
+
+        # Detect market regime (ranging vs trending)
+        regime = self._detect_market_regime(df, current_price)
+
+        # Log regime changes
+        if regime != self._last_regime and self._last_regime is not None:
+            logger.info(f"[REGIME] Market switched from {self._last_regime} to {regime}")
+        elif self._analyze_count == 0:
+            logger.info(f"[REGIME] Market is {regime}")
+        self._last_regime = regime
 
         # Update S/R zones for all timeframes
         self.sr_detector.update_zones(df, timeframe='1m', lookback=200)
@@ -456,7 +509,8 @@ class VWAPStrategy:
                             ))
 
         # 2. Trend Continuation Long: Uptrend + Pullback to +1σ
-        if bias == 'strong_bullish':
+        # Skip trend continuation in ranging markets (prioritize S/R mean reversion)
+        if bias == 'strong_bullish' and regime != 'ranging':
             dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
 
             if dist_to_upper <= self.band_proximity:
@@ -529,7 +583,8 @@ class VWAPStrategy:
                             ))
 
         # 4. Trend Continuation Short: Downtrend + Pullback to -1σ
-        if bias == 'strong_bearish':
+        # Skip trend continuation in ranging markets (prioritize S/R mean reversion)
+        if bias == 'strong_bearish' and regime != 'ranging':
             dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
 
             if dist_to_lower <= self.band_proximity:
