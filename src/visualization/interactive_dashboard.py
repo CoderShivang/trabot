@@ -113,6 +113,105 @@ class InteractiveDashboard:
 
         return formatted_data
 
+    def _create_trades_by_day_chart(self):
+        """Create bar chart showing win/loss breakdown by day of week"""
+        trades_by_day = self.performance.get('trades_by_day', {})
+
+        # Order days properly
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = []
+        wins = []
+        losses = []
+
+        for day in day_order:
+            if day in trades_by_day:
+                days.append(day[:3])  # Abbreviate to Mon, Tue, etc.
+                wins.append(trades_by_day[day]['wins'])
+                losses.append(trades_by_day[day]['losses'])
+
+        fig = go.Figure()
+
+        # Add wins bar
+        fig.add_trace(go.Bar(
+            x=days,
+            y=wins,
+            name='Wins',
+            marker_color='#27ae60',
+            text=wins,
+            textposition='auto'
+        ))
+
+        # Add losses bar
+        fig.add_trace(go.Bar(
+            x=days,
+            y=losses,
+            name='Losses',
+            marker_color='#e74c3c',
+            text=losses,
+            textposition='auto'
+        ))
+
+        fig.update_layout(
+            title='Trades by Day of Week',
+            xaxis_title='Day',
+            yaxis_title='Number of Trades',
+            barmode='stack',
+            template='plotly_white',
+            showlegend=True,
+            margin=dict(l=50, r=50, t=50, b=50)
+        )
+
+        return fig
+
+    def _create_winrate_by_day_chart(self):
+        """Create bar chart showing win rate by day of week"""
+        trades_by_day = self.performance.get('trades_by_day', {})
+
+        # Order days properly
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = []
+        win_rates = []
+        colors = []
+
+        for day in day_order:
+            if day in trades_by_day:
+                day_data = trades_by_day[day]
+                total_trades = day_data['wins'] + day_data['losses']
+
+                if total_trades > 0:
+                    win_rate = (day_data['wins'] / total_trades) * 100
+                    days.append(day[:3])  # Abbreviate
+                    win_rates.append(win_rate)
+                    # Color based on win rate
+                    colors.append('#27ae60' if win_rate >= 50 else '#e74c3c')
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=days,
+            y=win_rates,
+            marker_color=colors,
+            text=[f'{wr:.1f}%' for wr in win_rates],
+            textposition='auto'
+        ))
+
+        # Add 50% reference line
+        fig.add_hline(y=50, line_dash="dash", line_color="gray",
+                      annotation_text="50% Break-even",
+                      annotation_position="right")
+
+        fig.update_layout(
+            title='Win Rate by Day of Week',
+            xaxis_title='Day',
+            yaxis_title='Win Rate (%)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+            yaxis=dict(range=[0, 100])
+        )
+
+        return fig
+
     def _create_layout(self):
         """Create dashboard layout with filters and charts"""
         return html.Div([
@@ -134,6 +233,37 @@ class InteractiveDashboard:
                            style={'color': '#27ae60' if self.performance['net_pnl'] > 0 else '#e74c3c'}),
                 ], style={'display': 'inline-block', 'margin': '20px'}),
             ], style={'textAlign': 'center', 'backgroundColor': '#ecf0f1', 'padding': '10px', 'borderRadius': '5px'}),
+
+            html.Hr(),
+
+            # Day of Week Analysis Section
+            html.Div([
+                html.H3("Day of Week Analysis", style={'color': '#34495e'}),
+                html.P("Performance breakdown by day of the week",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+                # Two column layout for charts
+                html.Div([
+                    # Left: Trades per day
+                    html.Div([
+                        dcc.Graph(
+                            id='trades-by-day-chart',
+                            figure=self._create_trades_by_day_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+
+                    # Right: Win rate per day
+                    html.Div([
+                        dcc.Graph(
+                            id='winrate-by-day-chart',
+                            figure=self._create_winrate_by_day_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
+                ], style={'width': '100%'}),
+
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
 
             html.Hr(),
 

@@ -104,6 +104,17 @@ class BacktestStats:
     mean_reversion_trades: int = 0
     trend_continuation_trades: int = 0
 
+    # Day of week analysis
+    trades_by_day: dict = field(default_factory=lambda: {
+        'Monday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Tuesday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Wednesday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Thursday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Friday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Saturday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
+        'Sunday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0}
+    })
+
     # Limit order stats
     entry_fills: int = 0
     entry_timeouts: int = 0
@@ -657,6 +668,17 @@ class VWAPBacktestEngine:
         self.current_capital += net_pnl
         self.stats.total_fees += exit_fee
 
+        # Track day of week statistics
+        exit_datetime = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
+        day_name = exit_datetime.strftime('%A')  # 'Monday', 'Tuesday', etc.
+
+        if day_name in self.stats.trades_by_day:
+            if net_pnl > 0:
+                self.stats.trades_by_day[day_name]['wins'] += 1
+            else:
+                self.stats.trades_by_day[day_name]['losses'] += 1
+            self.stats.trades_by_day[day_name]['total_pnl'] += net_pnl
+
         self.closed_trades.append(position)
 
         # Log trade
@@ -780,7 +802,8 @@ class VWAPBacktestEngine:
                 'avg_loss': float(self.stats.avg_loss),
                 'largest_win': float(self.stats.largest_win),
                 'largest_loss': float(self.stats.largest_loss),
-                'avg_trade_duration_minutes': float(self.stats.avg_trade_duration)
+                'avg_trade_duration_minutes': float(self.stats.avg_trade_duration),
+                'trades_by_day': self.stats.trades_by_day
             },
             'order_stats': {
                 'entry_fills': self.stats.entry_fills,
