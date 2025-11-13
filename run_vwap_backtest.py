@@ -63,14 +63,14 @@ def parse_args():
     parser.add_argument('--stop', type=int, default=150,
                         help='Stop loss in dollars (default: 150)')
 
-    parser.add_argument('--band-proximity', type=int, default=75,
-                        help='How close to VWAP band for entry (default: 75)')
+    parser.add_argument('--band-proximity', type=int, default=300,
+                        help='How close to VWAP band for entry (default: 300)')
 
-    parser.add_argument('--zone-proximity', type=int, default=150,
-                        help='How close to S/R zone for entry (default: 150)')
+    parser.add_argument('--zone-proximity', type=int, default=500,
+                        help='How close to S/R zone for entry (default: 500)')
 
-    parser.add_argument('--min-zone-strength', type=int, default=60,
-                        help='Minimum S/R zone quality (0-100, default: 60)')
+    parser.add_argument('--min-zone-strength', type=int, default=20,
+                        help='Minimum S/R zone quality (0-100, default: 20)')
 
     return parser.parse_args()
 
