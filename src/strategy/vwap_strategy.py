@@ -309,7 +309,7 @@ class VWAPStrategy:
         # Parameters (can be tuned)
         self.target_points = self.config.get('target_points', 200)  # TP in dollars
         self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
-        self.band_proximity = self.config.get('band_proximity', 200)  # How close to band (increased for BTC)
+        self.band_proximity = self.config.get('band_proximity', 300)  # How close to band (increased for BTC volatility)
         self.zone_proximity = self.config.get('zone_proximity', 500)  # How close to S/R (increased for BTC)
         self.min_zone_strength = self.config.get('min_zone_strength', 20)  # Min zone quality (lowered to match detector)
         self.require_htf_confluence = self.config.get('require_htf_confluence', False)  # Require 5m/15m confirmation
@@ -380,21 +380,26 @@ class VWAPStrategy:
         if len(strong_zones) > 0:
             dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
             dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
-            logger.info(f"[VWAP] Price: ${current_price:,.0f} | VWAP: ${vwap.vwap:,.0f} | -1σ: ${vwap.lower_1std:,.0f} (dist:{dist_to_lower:.0f}) | +1σ: ${vwap.upper_1std:,.0f} (dist:{dist_to_upper:.0f}) | Bias: {bias}")
+            logger.info(f"[VWAP] Price: ${current_price:,.0f} | VWAP: ${vwap.vwap:,.0f} | -1s: ${vwap.lower_1std:,.0f} (dist:{dist_to_lower:.0f}) | +1s: ${vwap.upper_1std:,.0f} (dist:{dist_to_upper:.0f}) | Bias: {bias}")
 
         # Find trade setups
         signals = []
 
         # === LONG SETUPS ===
 
-        # 1. Mean Reversion Long: -1σ + Support
+        # 1. Mean Reversion Long: -1s + Support
         if bias in ['bullish_mean_reversion', 'neutral']:
             dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
 
             if dist_to_lower <= self.band_proximity:
                 support_zones = [z for z in strong_zones if z.zone_type in ['support', 'both']]
                 if len(support_zones) > 0:
-                    logger.info(f"[CHECK-LONG-MR] Found {len(support_zones)} support zones, checking proximity...")
+                    logger.info(f"[CHECK-LONG-MR] Found {len(support_zones)} support zones near -1s band (dist:{dist_to_lower:.0f} <= {self.band_proximity})")
+            else:
+                if len(strong_zones) > 0:
+                    logger.info(f"[SKIP-LONG-MR] Distance to -1s band too far: {dist_to_lower:.0f} > {self.band_proximity}")
+
+            if dist_to_lower <= self.band_proximity:
 
                 for zone in strong_zones:
                     if zone.zone_type in ['support', 'both'] and zone.is_near(current_price, self.zone_proximity):
