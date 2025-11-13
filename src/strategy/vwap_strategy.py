@@ -572,39 +572,37 @@ class VWAPStrategy:
                                 htf_confluence=has_htf
                             ))
 
-        # 2. Trend Continuation Long: Uptrend + Pullback to +1σ
-        # Skip trend continuation in ranging markets (prioritize S/R mean reversion)
-        if bias == 'strong_bullish' and regime != 'ranging':
-            dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
+        # 2. Trend Continuation Long: Price firmly beyond +1σ (strong uptrend)
+        # NEW LOGIC: Trigger when price IS beyond 1σ, not waiting for pullback
+        # Skip in ranging markets (prioritize S/R mean reversion)
+        if current_price > vwap.upper_1std and regime != 'ranging' and market_regime != 'bearish_regime':
+            # Price is beyond upper band - strong uptrend
+            distance_beyond = current_price - vwap.upper_1std
 
-            if dist_to_upper <= self.band_proximity:
-                for zone in strong_zones:
-                    if zone.is_near(current_price, self.zone_proximity):
-                        # Check HTF confluence (less strict for trend continuation)
-                        has_htf = self.sr_detector.has_htf_confluence(
-                            current_price,
-                            zone_type='support',
-                            proximity=self.zone_proximity
-                        )
+            # Only enter if significantly beyond (not just touching)
+            if distance_beyond >= 50:  # At least $50 beyond the band
+                # Calculate confidence based on trend strength
+                trend_confidence = min(95, 60 + (distance_beyond / 100))  # 60-95 based on distance
 
-                        confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
+                # Check if market regime supports this (boost confidence in bullish regime)
+                if market_regime == 'bullish_regime':
+                    trend_confidence += 10
 
-                        if confidence >= 50:  # Lowered from 60 for initial testing
-                            entry = min(vwap.upper_1std, zone.level) - 20
+                # Enter at current price or slightly below for limit order
+                entry = current_price - 20
 
-                            htf_str = " + HTF" if has_htf else ""
-                            signals.append(TradeSignal(
-                                direction='LONG',
-                                signal_type='trend_continuation',
-                                entry_price=entry,
-                                stop_loss=entry - self.stop_points,
-                                take_profit=entry + self.target_points,
-                                confidence=confidence,
-                                reason=f"LONG Trend: Pullback to +1std (${vwap.upper_1std:,.0f}) in uptrend{htf_str}",
-                                vwap_band=vwap.upper_1std,
-                                sr_zone=zone,
-                                htf_confluence=has_htf
-                            ))
+                signals.append(TradeSignal(
+                    direction='LONG',
+                    signal_type='trend_continuation',
+                    entry_price=entry,
+                    stop_loss=max(entry - self.stop_points, vwap.upper_1std - 50),  # SL below band
+                    take_profit=entry + self.target_points,
+                    confidence=trend_confidence,
+                    reason=f"LONG Trend: Price ${current_price:,.0f} firmly beyond +1std (${vwap.upper_1std:,.0f}) by ${distance_beyond:,.0f}",
+                    vwap_band=vwap.upper_1std,
+                    sr_zone=None,  # No S/R zone required for trend continuation
+                    htf_confluence=market_regime == 'bullish_regime'
+                ))
 
         # === SHORT SETUPS ===
 
@@ -666,39 +664,37 @@ class VWAPStrategy:
                                 htf_confluence=has_htf
                             ))
 
-        # 4. Trend Continuation Short: Downtrend + Pullback to -1σ
-        # Skip trend continuation in ranging markets (prioritize S/R mean reversion)
-        if bias == 'strong_bearish' and regime != 'ranging':
-            dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
+        # 4. Trend Continuation Short: Price firmly beyond -1σ (strong downtrend)
+        # NEW LOGIC: Trigger when price IS beyond 1σ, not waiting for pullback
+        # Skip in ranging markets (prioritize S/R mean reversion)
+        if current_price < vwap.lower_1std and regime != 'ranging' and market_regime != 'bullish_regime':
+            # Price is beyond lower band - strong downtrend
+            distance_beyond = vwap.lower_1std - current_price
 
-            if dist_to_lower <= self.band_proximity:
-                for zone in strong_zones:
-                    if zone.is_near(current_price, self.zone_proximity):
-                        # Check HTF confluence (less strict for trend continuation)
-                        has_htf = self.sr_detector.has_htf_confluence(
-                            current_price,
-                            zone_type='resistance',
-                            proximity=self.zone_proximity
-                        )
+            # Only enter if significantly beyond (not just touching)
+            if distance_beyond >= 50:  # At least $50 beyond the band
+                # Calculate confidence based on trend strength
+                trend_confidence = min(95, 60 + (distance_beyond / 100))  # 60-95 based on distance
 
-                        confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
+                # Check if market regime supports this (boost confidence in bearish regime)
+                if market_regime == 'bearish_regime':
+                    trend_confidence += 10
 
-                        if confidence >= 50:  # Lowered from 60 for initial testing
-                            entry = max(vwap.lower_1std, zone.level) + 20
+                # Enter at current price or slightly above for limit order
+                entry = current_price + 20
 
-                            htf_str = " + HTF" if has_htf else ""
-                            signals.append(TradeSignal(
-                                direction='SHORT',
-                                signal_type='trend_continuation',
-                                entry_price=entry,
-                                stop_loss=entry + self.stop_points,
-                                take_profit=entry - self.target_points,
-                                confidence=confidence,
-                                reason=f"SHORT Trend: Pullback to -1std (${vwap.lower_1std:,.0f}) in downtrend{htf_str}",
-                                vwap_band=vwap.lower_1std,
-                                sr_zone=zone,
-                                htf_confluence=has_htf
-                            ))
+                signals.append(TradeSignal(
+                    direction='SHORT',
+                    signal_type='trend_continuation',
+                    entry_price=entry,
+                    stop_loss=min(entry + self.stop_points, vwap.lower_1std + 50),  # SL above band
+                    take_profit=entry - self.target_points,
+                    confidence=trend_confidence,
+                    reason=f"SHORT Trend: Price ${current_price:,.0f} firmly beyond -1std (${vwap.lower_1std:,.0f}) by ${distance_beyond:,.0f}",
+                    vwap_band=vwap.lower_1std,
+                    sr_zone=None,  # No S/R zone required for trend continuation
+                    htf_confluence=market_regime == 'bearish_regime'
+                ))
 
         # Sort by confidence
         signals.sort(key=lambda s: s.confidence, reverse=True)
