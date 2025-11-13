@@ -153,6 +153,10 @@ class VWAPBacktestEngine:
         self.stats = BacktestStats()
         self.order_signals: Dict[str, TradeSignal] = {}  # Map order_id to signal
 
+        # Equity curve tracking for visualization
+        self.equity_curve: List[Dict] = []  # [{'timestamp': ms, 'equity': float, 'drawdown': float}, ...]
+        self.peak_equity = self.initial_capital
+
         # Results directory
         self.results_dir = Path('data/vwap_backtest')
         self.results_dir.mkdir(parents=True, exist_ok=True)
@@ -668,6 +672,18 @@ class VWAPBacktestEngine:
         self.current_capital += net_pnl
         self.stats.total_fees += exit_fee
 
+        # Track equity curve for visualization
+        if self.current_capital > self.peak_equity:
+            self.peak_equity = self.current_capital
+        drawdown = ((self.peak_equity - self.current_capital) / self.peak_equity) * 100
+
+        self.equity_curve.append({
+            'timestamp': timestamp,
+            'equity': self.current_capital,
+            'drawdown': drawdown,
+            'pnl': net_pnl
+        })
+
         # Track day of week statistics
         exit_datetime = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
         day_name = exit_datetime.strftime('%A')  # 'Monday', 'Tuesday', etc.
@@ -811,7 +827,8 @@ class VWAPBacktestEngine:
                 'tp_fills': self.stats.tp_fills,
                 'sl_fills': self.stats.sl_fills
             },
-            'trades': trades_data
+            'trades': trades_data,
+            'equity_curve': self.equity_curve
         }
 
         with open(results_file, 'w') as f:

@@ -17,7 +17,7 @@ import pandas as pd
 import json
 from pathlib import Path
 from typing import List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import webbrowser
 from threading import Timer
 
@@ -212,6 +212,137 @@ class InteractiveDashboard:
 
         return fig
 
+    def _create_equity_curve_chart(self):
+        """Create equity curve and drawdown chart"""
+        equity_curve = self.results.get('equity_curve', [])
+
+        if not equity_curve:
+            # Return empty chart if no equity data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No equity curve data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Convert timestamps to datetime
+        timestamps = [datetime.fromtimestamp(point['timestamp'] / 1000, tz=timezone.utc)
+                      for point in equity_curve]
+        equity = [point['equity'] for point in equity_curve]
+        drawdown = [point['drawdown'] for point in equity_curve]
+
+        # Find key points
+        max_equity = max(equity)
+        max_equity_idx = equity.index(max_equity)
+        max_drawdown = max(drawdown)
+        max_dd_idx = drawdown.index(max_drawdown)
+
+        # Create figure with secondary y-axis
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=('Equity Curve', 'Drawdown'),
+            vertical_spacing=0.1,
+            shared_xaxes=True
+        )
+
+        # Add equity curve
+        fig.add_trace(
+            go.Scatter(
+                x=timestamps,
+                y=equity,
+                mode='lines',
+                name='Equity',
+                line=dict(color='#3498db', width=2),
+                fill='tonexty',
+                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Equity:</b> $%{y:.2f}<br>' +
+                              '<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Add initial capital line
+        initial_capital = self.config.get('initial_capital', 100)
+        fig.add_hline(
+            y=initial_capital,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"Initial: ${initial_capital}",
+            annotation_position="right",
+            row=1, col=1
+        )
+
+        # Mark max profit point
+        fig.add_trace(
+            go.Scatter(
+                x=[timestamps[max_equity_idx]],
+                y=[max_equity],
+                mode='markers+text',
+                name='Max Profit',
+                marker=dict(size=12, color='#27ae60', symbol='star'),
+                text=[f'Max: ${max_equity:.2f}'],
+                textposition='top center',
+                hovertemplate='<b>Max Profit</b><br>' +
+                              '<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Equity:</b> $%{y:.2f}<br>' +
+                              '<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Add drawdown chart
+        fig.add_trace(
+            go.Scatter(
+                x=timestamps,
+                y=[-dd for dd in drawdown],  # Negative for visual effect
+                mode='lines',
+                name='Drawdown',
+                line=dict(color='#e74c3c', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(231, 76, 60, 0.3)',
+                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Drawdown:</b> %{y:.2f}%<br>' +
+                              '<extra></extra>'
+            ),
+            row=2, col=1
+        )
+
+        # Mark max drawdown point
+        fig.add_trace(
+            go.Scatter(
+                x=[timestamps[max_dd_idx]],
+                y=[-max_drawdown],
+                mode='markers+text',
+                name='Max Drawdown',
+                marker=dict(size=12, color='#c0392b', symbol='diamond'),
+                text=[f'Max DD: {max_drawdown:.2f}%'],
+                textposition='bottom center',
+                hovertemplate='<b>Max Drawdown</b><br>' +
+                              '<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Drawdown:</b> %{y:.2f}%<br>' +
+                              '<extra></extra>'
+            ),
+            row=2, col=1
+        )
+
+        # Update layout
+        fig.update_xaxes(title_text="Date", row=2, col=1)
+        fig.update_yaxes(title_text="Equity ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1)
+
+        fig.update_layout(
+            height=700,
+            template='plotly_white',
+            showlegend=True,
+            hovermode='x unified',
+            margin=dict(l=50, r=50, t=80, b=50)
+        )
+
+        return fig
+
     def _create_layout(self):
         """Create dashboard layout with filters and charts"""
         return html.Div([
@@ -263,6 +394,20 @@ class InteractiveDashboard:
                     ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
                 ], style={'width': '100%'}),
 
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Equity Curve and Drawdown Section
+            html.Div([
+                html.H3("Equity Curve & Drawdown", style={'color': '#34495e'}),
+                html.P("Track account balance progression and maximum drawdown over time",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+                dcc.Graph(
+                    id='equity-curve-chart',
+                    figure=self._create_equity_curve_chart(),
+                    style={'height': '700px'}
+                )
             ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
 
             html.Hr(),
