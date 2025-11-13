@@ -1,12 +1,14 @@
 """
-VWAP + S/R Strategy for 1-Minute Scalping
+VWAP + Enhanced S/R Strategy for 1-Minute Scalping
 
 Based on user's trading approach:
 1. Session-based VWAP with ±1σ and ±2σ bands
-2. S/R zones from consolidation (white boxes in charts)
-3. Mean reversion trades at VWAP bands + S/R confluence
-4. Trend continuation on pullbacks to bands
-5. All orders are LIMIT orders (lower fees)
+2. Enhanced S/R zones with multi-timeframe confluence (1m, 5m, 15m)
+3. Zone invalidation tracking
+4. Choppy/trending area filtering
+5. Mean reversion trades at VWAP bands + S/R confluence
+6. Trend continuation on pullbacks to bands
+7. All orders are LIMIT orders (lower fees)
 
 Entry Types:
 - LONG: -1σ + support (mean reversion) OR pullback to +1σ in uptrend
@@ -18,6 +20,7 @@ import pandas as pd
 from typing import List, Optional, Dict, Tuple
 from dataclasses import dataclass
 from src.utils.logger import setup_logger
+from src.strategy.enhanced_sr_detector import EnhancedSRDetector, EnhancedSRZone
 
 logger = setup_logger(__name__)
 
@@ -76,7 +79,8 @@ class TradeSignal:
     confidence: float  # 0-100
     reason: str  # Human-readable explanation
     vwap_band: float
-    sr_zone: Optional[SRZone]
+    sr_zone: Optional[EnhancedSRZone]
+    htf_confluence: bool = False  # Whether 5m/15m confirms zone
 
 
 class VWAPCalculator:
@@ -278,13 +282,14 @@ class SimpleConsolidationDetector:
 
 class VWAPStrategy:
     """
-    VWAP + S/R Strategy
+    VWAP + Enhanced S/R Strategy
 
     Trading Rules:
-    1. Mean Reversion LONG: Price near -1σ + at support zone
-    2. Mean Reversion SHORT: Price near +1σ + at resistance zone
+    1. Mean Reversion LONG: Price near -1σ + at support zone (with HTF confluence)
+    2. Mean Reversion SHORT: Price near +1σ + at resistance zone (with HTF confluence)
     3. Trend Continuation LONG: Price > all bands, pullback to +1σ
     4. Trend Continuation SHORT: Price < all bands, pullback to -1σ
+    5. Zone invalidation tracking to avoid failed zones
     """
 
     def __init__(self, config=None):
@@ -292,7 +297,14 @@ class VWAPStrategy:
 
         # Components
         self.vwap_calc = VWAPCalculator()
-        self.sr_detector = SimpleConsolidationDetector()
+        self.sr_detector = EnhancedSRDetector(
+            min_consolidation_bars=15,
+            max_consolidation_range_pct=0.02,
+            min_touches=3,
+            min_strength=40,
+            max_volatility=0.008,
+            max_trend_slope=0.03
+        )
 
         # Parameters (can be tuned)
         self.target_points = self.config.get('target_points', 200)  # TP in dollars
@@ -300,17 +312,22 @@ class VWAPStrategy:
         self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
         self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
         self.min_zone_strength = self.config.get('min_zone_strength', 60)  # Min zone quality
+        self.require_htf_confluence = self.config.get('require_htf_confluence', True)  # Require 5m/15m confirmation
 
         # State
         self.current_zones = []
 
-    def analyze(self, df: pd.DataFrame, current_price: float) -> List[TradeSignal]:
+    def analyze(self, df: pd.DataFrame, current_price: float,
+                df_5m: Optional[pd.DataFrame] = None,
+                df_15m: Optional[pd.DataFrame] = None) -> List[TradeSignal]:
         """
-        Analyze market and find trade setups
+        Analyze market and find trade setups with multi-timeframe confluence
 
         Args:
-            df: OHLCV DataFrame with recent candles
+            df: 1m OHLCV DataFrame with recent candles
             current_price: Current market price
+            df_5m: Optional 5m OHLCV DataFrame for HTF zones
+            df_15m: Optional 15m OHLCV DataFrame for HTF zones
 
         Returns:
             List of TradeSignal objects (sorted by confidence)
@@ -319,9 +336,28 @@ class VWAPStrategy:
             logger.warning("[VWAP] Insufficient data for analysis")
             return []
 
-        # Update S/R zones
-        self.current_zones = self.sr_detector.detect_zones(df)
-        strong_zones = [z for z in self.current_zones if z.strength >= self.min_zone_strength]
+        # Update S/R zones for all timeframes
+        self.sr_detector.update_zones(df, timeframe='1m', lookback=200)
+
+        if df_5m is not None and len(df_5m) >= 50:
+            self.sr_detector.update_zones(df_5m, timeframe='5m', lookback=100)
+
+        if df_15m is not None and len(df_15m) >= 50:
+            self.sr_detector.update_zones(df_15m, timeframe='15m', lookback=100)
+
+        # Get zones near current price (only active, not invalidated)
+        zones_near_price = self.sr_detector.get_zones_near_price(
+            current_price,
+            timeframes=['1m'],
+            proximity=self.zone_proximity
+        )
+
+        # Filter by strength
+        strong_zones = [z for z in zones_near_price.get('1m', [])
+                       if z.strength >= self.min_zone_strength and not z.invalidated]
+
+        if strong_zones:
+            logger.debug(f"[VWAP-SR] Found {len(strong_zones)} strong 1m zones near ${current_price:,.0f}")
 
         # Calculate VWAP
         try:
@@ -345,11 +381,24 @@ class VWAPStrategy:
             if dist_to_lower <= self.band_proximity:
                 for zone in strong_zones:
                     if zone.zone_type in ['support', 'both'] and zone.is_near(current_price, self.zone_proximity):
-                        confidence = self._calculate_confluence(zone, bias, dist_to_lower)
+                        # Check HTF confluence
+                        has_htf = self.sr_detector.has_htf_confluence(
+                            current_price,
+                            zone_type='support',
+                            proximity=self.zone_proximity
+                        )
+
+                        # Skip if HTF required but not present
+                        if self.require_htf_confluence and not has_htf:
+                            logger.debug(f"[VWAP-SR] Skipping LONG at ${zone.level:,.0f} - no HTF confluence")
+                            continue
+
+                        confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
 
                         if confidence >= 65:
                             entry = max(zone.level - 30, current_price - 50)
 
+                            htf_str = " + HTF✓" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='LONG',
                                 signal_type='mean_reversion',
@@ -357,9 +406,10 @@ class VWAPStrategy:
                                 stop_loss=entry - self.stop_points,
                                 take_profit=entry + self.target_points,
                                 confidence=confidence,
-                                reason=f"LONG Mean Reversion: -1std (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength})",
+                                reason=f"LONG Mean Reversion: -1std (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength}){htf_str}",
                                 vwap_band=vwap.lower_1std,
-                                sr_zone=zone
+                                sr_zone=zone,
+                                htf_confluence=has_htf
                             ))
 
         # 2. Trend Continuation Long: Uptrend + Pullback to +1σ
@@ -369,11 +419,19 @@ class VWAPStrategy:
             if dist_to_upper <= self.band_proximity:
                 for zone in strong_zones:
                     if zone.is_near(current_price, self.zone_proximity):
-                        confidence = self._calculate_confluence(zone, bias, dist_to_upper)
+                        # Check HTF confluence (less strict for trend continuation)
+                        has_htf = self.sr_detector.has_htf_confluence(
+                            current_price,
+                            zone_type='support',
+                            proximity=self.zone_proximity
+                        )
+
+                        confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
 
                         if confidence >= 60:
                             entry = min(vwap.upper_1std, zone.level) - 20
 
+                            htf_str = " + HTF✓" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='LONG',
                                 signal_type='trend_continuation',
@@ -381,9 +439,10 @@ class VWAPStrategy:
                                 stop_loss=entry - self.stop_points,
                                 take_profit=entry + self.target_points,
                                 confidence=confidence,
-                                reason=f"LONG Trend: Pullback to +1std (${vwap.upper_1std:,.0f}) in uptrend",
+                                reason=f"LONG Trend: Pullback to +1std (${vwap.upper_1std:,.0f}) in uptrend{htf_str}",
                                 vwap_band=vwap.upper_1std,
-                                sr_zone=zone
+                                sr_zone=zone,
+                                htf_confluence=has_htf
                             ))
 
         # === SHORT SETUPS ===
@@ -395,11 +454,24 @@ class VWAPStrategy:
             if dist_to_upper <= self.band_proximity:
                 for zone in strong_zones:
                     if zone.zone_type in ['resistance', 'both'] and zone.is_near(current_price, self.zone_proximity):
-                        confidence = self._calculate_confluence(zone, bias, dist_to_upper)
+                        # Check HTF confluence
+                        has_htf = self.sr_detector.has_htf_confluence(
+                            current_price,
+                            zone_type='resistance',
+                            proximity=self.zone_proximity
+                        )
+
+                        # Skip if HTF required but not present
+                        if self.require_htf_confluence and not has_htf:
+                            logger.debug(f"[VWAP-SR] Skipping SHORT at ${zone.level:,.0f} - no HTF confluence")
+                            continue
+
+                        confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
 
                         if confidence >= 65:
                             entry = min(zone.level + 30, current_price + 50)
 
+                            htf_str = " + HTF✓" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='SHORT',
                                 signal_type='mean_reversion',
@@ -407,9 +479,10 @@ class VWAPStrategy:
                                 stop_loss=entry + self.stop_points,
                                 take_profit=entry - self.target_points,
                                 confidence=confidence,
-                                reason=f"SHORT Mean Reversion: +1std (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength})",
+                                reason=f"SHORT Mean Reversion: +1std (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength}){htf_str}",
                                 vwap_band=vwap.upper_1std,
-                                sr_zone=zone
+                                sr_zone=zone,
+                                htf_confluence=has_htf
                             ))
 
         # 4. Trend Continuation Short: Downtrend + Pullback to -1σ
@@ -419,11 +492,19 @@ class VWAPStrategy:
             if dist_to_lower <= self.band_proximity:
                 for zone in strong_zones:
                     if zone.is_near(current_price, self.zone_proximity):
-                        confidence = self._calculate_confluence(zone, bias, dist_to_lower)
+                        # Check HTF confluence (less strict for trend continuation)
+                        has_htf = self.sr_detector.has_htf_confluence(
+                            current_price,
+                            zone_type='resistance',
+                            proximity=self.zone_proximity
+                        )
+
+                        confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
 
                         if confidence >= 60:
                             entry = max(vwap.lower_1std, zone.level) + 20
 
+                            htf_str = " + HTF✓" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='SHORT',
                                 signal_type='trend_continuation',
@@ -431,9 +512,10 @@ class VWAPStrategy:
                                 stop_loss=entry + self.stop_points,
                                 take_profit=entry - self.target_points,
                                 confidence=confidence,
-                                reason=f"SHORT Trend: Pullback to -1std (${vwap.lower_1std:,.0f}) in downtrend",
+                                reason=f"SHORT Trend: Pullback to -1std (${vwap.lower_1std:,.0f}) in downtrend{htf_str}",
                                 vwap_band=vwap.lower_1std,
-                                sr_zone=zone
+                                sr_zone=zone,
+                                htf_confluence=has_htf
                             ))
 
         # Sort by confidence
@@ -454,7 +536,7 @@ class VWAPStrategy:
         else:
             return 'neutral'
 
-    def _calculate_confluence(self, zone: SRZone, bias: str, distance: float) -> float:
+    def _calculate_confluence(self, zone: EnhancedSRZone, bias: str, distance: float, htf_confluence: bool = False) -> float:
         """
         Calculate confluence score (0-100)
 
@@ -462,6 +544,7 @@ class VWAPStrategy:
         - Zone strength
         - Distance to zone
         - Market bias alignment
+        - HTF confluence (5m/15m confirmation)
         """
         # Base score from zone strength
         score = zone.strength * 0.5
@@ -480,5 +563,9 @@ class VWAPStrategy:
             bias_bonus = 10
 
         score += bias_bonus
+
+        # HTF confluence bonus (major boost for aligned higher timeframes)
+        if htf_confluence:
+            score += 20
 
         return min(100, score)

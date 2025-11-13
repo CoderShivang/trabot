@@ -239,8 +239,16 @@ class VWAPBacktestEngine:
         2. Place limit entry orders
         3. Check if pending orders get filled
         4. Manage open positions (TP/SL limit orders)
+        5. Multi-timeframe S/R zone detection (1m, 5m, 15m)
         """
         logger.info("[BACKTEST] Starting simulation...\n")
+        logger.info("[MTF] Preparing multi-timeframe data (1m, 5m, 15m)...")
+
+        # Resample 1m data to 5m and 15m for HTF S/R zones
+        df_5m = self._resample_ohlcv(df, '5T')  # 5 minutes
+        df_15m = self._resample_ohlcv(df, '15T')  # 15 minutes
+
+        logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars\n")
 
         # Need lookback for strategy
         lookback = 200
@@ -256,6 +264,11 @@ class VWAPBacktestEngine:
             # Historical data for strategy (up to current bar)
             hist_df = df.iloc[:idx+1].copy()
 
+            # Get corresponding HTF data (up to current time)
+            current_time = current_bar['timestamp']
+            hist_df_5m = df_5m[df_5m['timestamp'] <= current_time].copy()
+            hist_df_15m = df_15m[df_15m['timestamp'] <= current_time].copy()
+
             # === 1. Check pending entry orders for fills ===
             self._check_entry_fills(timestamp, high, low)
 
@@ -269,7 +282,13 @@ class VWAPBacktestEngine:
 
             # === 4. Look for new entry signals (if no position) ===
             if len(self.positions) == 0 and len(self.pending_entry_orders) == 0:
-                signals = self.strategy.analyze(hist_df, close)
+                # Pass multi-timeframe data to strategy
+                signals = self.strategy.analyze(
+                    hist_df,
+                    close,
+                    df_5m=hist_df_5m if len(hist_df_5m) >= 50 else None,
+                    df_15m=hist_df_15m if len(hist_df_15m) >= 50 else None
+                )
 
                 if signals:
                     # Take best signal
@@ -594,7 +613,8 @@ class VWAPBacktestEngine:
                     'signal_type': trade.signal.signal_type,
                     'confidence': trade.signal.confidence,
                     'reason': trade.signal.reason,
-                    'vwap_band': float(trade.signal.vwap_band) if trade.signal.vwap_band else None
+                    'vwap_band': float(trade.signal.vwap_band) if trade.signal.vwap_band else None,
+                    'htf_confluence': trade.signal.htf_confluence
                 }
 
                 # Add SR zone data if available
@@ -604,7 +624,9 @@ class VWAPBacktestEngine:
                         'upper': float(trade.signal.sr_zone.upper),
                         'lower': float(trade.signal.sr_zone.lower),
                         'zone_type': trade.signal.sr_zone.zone_type,
-                        'strength': trade.signal.sr_zone.strength
+                        'strength': trade.signal.sr_zone.strength,
+                        'timeframe': trade.signal.sr_zone.timeframe,
+                        'invalidated': trade.signal.sr_zone.invalidated
                     }
 
             trades_data.append({
@@ -817,6 +839,28 @@ class VWAPBacktestEngine:
         df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
 
         return df
+
+    def _resample_ohlcv(self, df: pd.DataFrame, freq: str) -> pd.DataFrame:
+        """
+        Resample OHLCV data to higher timeframe
+
+        Args:
+            df: Source DataFrame with columns [timestamp, open, high, low, close, volume]
+            freq: Pandas frequency string ('5T' for 5min, '15T' for 15min)
+
+        Returns:
+            Resampled DataFrame
+        """
+        df_resampled = df.set_index('timestamp').resample(freq).agg({
+            'open': 'first',
+            'high': 'max',
+            'low': 'min',
+            'close': 'last',
+            'volume': 'sum'
+        }).dropna()
+
+        df_resampled.reset_index(inplace=True)
+        return df_resampled
 
     def _timeframe_to_ms(self, timeframe: str) -> int:
         """Convert timeframe to milliseconds"""
