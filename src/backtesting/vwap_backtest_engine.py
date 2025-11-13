@@ -444,12 +444,22 @@ class VWAPBacktestEngine:
 
         pos_id = f"POS_{timestamp}_{entry_order.direction}"
 
-        # Get TP/SL from signal, or use defaults
+        # Recalculate TP/SL based on ACTUAL filled price, not signal price
+        # This ensures consistent risk/reward regardless of fill price
         if signal:
-            stop_loss = signal.stop_loss
-            take_profit = signal.take_profit
+            # Calculate the intended distances from the signal
+            signal_stop_distance = abs(signal.stop_loss - signal.entry_price)
+            signal_target_distance = abs(signal.take_profit - signal.entry_price)
+
+            # Apply those distances to the actual filled price
+            if entry_order.direction == 'LONG':
+                stop_loss = entry_order.filled_price - signal_stop_distance
+                take_profit = entry_order.filled_price + signal_target_distance
+            else:  # SHORT
+                stop_loss = entry_order.filled_price + signal_stop_distance
+                take_profit = entry_order.filled_price - signal_target_distance
         else:
-            # Fallback defaults
+            # Fallback defaults (should rarely happen)
             if entry_order.direction == 'LONG':
                 stop_loss = entry_order.filled_price - 150
                 take_profit = entry_order.filled_price + 200
