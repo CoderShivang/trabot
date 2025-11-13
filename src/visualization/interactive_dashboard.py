@@ -50,6 +50,56 @@ class InteractiveDashboard:
         self.app.layout = self._create_layout()
         self._setup_callbacks()
 
+    def _aggregate_daily_pnl(self):
+        """Aggregate trades by date and calculate daily P&L"""
+        daily_data = {}
+
+        for trade in self.trades:
+            # Extract date from entry timestamp
+            date = pd.to_datetime(trade['entry_time'], unit='ms').date()
+
+            if date not in daily_data:
+                daily_data[date] = {
+                    'date': date,
+                    'pnl': 0,
+                    'trades': 0,
+                    'wins': 0,
+                    'losses': 0
+                }
+
+            daily_data[date]['pnl'] += trade['pnl']
+            daily_data[date]['trades'] += 1
+
+            if trade['pnl'] > 0:
+                daily_data[date]['wins'] += 1
+            else:
+                daily_data[date]['losses'] += 1
+
+        # Convert to sorted list (by date)
+        daily_list = sorted(daily_data.values(), key=lambda x: x['date'], reverse=True)
+
+        return daily_list
+
+    def _format_daily_pnl_table(self):
+        """Format daily P&L data for display in DataTable"""
+        daily_data = self._aggregate_daily_pnl()
+
+        formatted_data = []
+        for day in daily_data:
+            win_rate = (day['wins'] / day['trades'] * 100) if day['trades'] > 0 else 0
+
+            formatted_data.append({
+                'date_str': day['date'].strftime('%Y-%m-%d'),
+                'pnl_str': f"${day['pnl']:,.2f}",
+                'pnl': day['pnl'],  # Hidden field for conditional formatting and sorting
+                'trades': day['trades'],
+                'wins': day['wins'],
+                'losses': day['losses'],
+                'win_rate_str': f"{win_rate:.1f}%"
+            })
+
+        return formatted_data
+
     def _create_layout(self):
         """Create dashboard layout with filters and charts"""
         return html.Div([
@@ -71,6 +121,62 @@ class InteractiveDashboard:
                            style={'color': '#27ae60' if self.performance['net_pnl'] > 0 else '#e74c3c'}),
                 ], style={'display': 'inline-block', 'margin': '20px'}),
             ], style={'textAlign': 'center', 'backgroundColor': '#ecf0f1', 'padding': '10px', 'borderRadius': '5px'}),
+
+            html.Hr(),
+
+            # Daily P&L Analysis Section
+            html.Div([
+                html.H3("Daily P&L Analysis", style={'color': '#34495e'}),
+                html.P("View your best and worst trading days. Click column headers to sort.",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+                dash_table.DataTable(
+                    id='daily-pnl-table',
+                    columns=[
+                        {'name': 'Date', 'id': 'date_str'},
+                        {'name': 'Total P&L', 'id': 'pnl_str', 'type': 'numeric'},
+                        {'name': 'Trades', 'id': 'trades'},
+                        {'name': 'Wins', 'id': 'wins'},
+                        {'name': 'Losses', 'id': 'losses'},
+                        {'name': 'Win Rate', 'id': 'win_rate_str'},
+                    ],
+                    data=self._format_daily_pnl_table(),
+                    style_data_conditional=[
+                        {
+                            'if': {'filter_query': '{pnl} > 0'},
+                            'backgroundColor': '#d4edda',
+                            'color': '#155724',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'filter_query': '{pnl} < 0'},
+                            'backgroundColor': '#f8d7da',
+                            'color': '#721c24',
+                            'fontWeight': 'bold'
+                        }
+                    ],
+                    style_header={
+                        'backgroundColor': '#2c3e50',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_cell={
+                        'textAlign': 'center',
+                        'padding': '10px',
+                        'fontSize': '14px'
+                    },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': 'date_str'},
+                            'textAlign': 'left',
+                            'fontWeight': 'bold'
+                        }
+                    ],
+                    sort_action='native',  # Enable built-in sorting
+                    sort_mode='single',
+                    page_size=15
+                )
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
 
             html.Hr(),
 
