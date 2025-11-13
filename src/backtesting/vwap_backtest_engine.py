@@ -68,6 +68,8 @@ class BacktestPosition:
     # Tracking
     highest_price: float = 0.0
     lowest_price: float = float('inf')
+    use_trailing_tp: bool = False  # Enable trailing TP for trend trades
+    trailing_activated: bool = False  # Whether trailing has been activated
 
     # Exit
     exit_price: Optional[float] = None
@@ -310,10 +312,14 @@ class VWAPBacktestEngine:
             # === 2. Check open positions for TP/SL fills ===
             self._check_position_fills(timestamp, high, low)
 
-            # === 3. Update position tracking ===
+            # === 3. Update position tracking and trailing TP ===
             for pos in self.positions:
                 pos.highest_price = max(pos.highest_price, high)
                 pos.lowest_price = min(pos.lowest_price, low)
+
+                # Implement trailing TP for trend trades
+                if pos.use_trailing_tp and pos.tp_order:
+                    self._update_trailing_tp(pos, close)
 
             # === 4. Look for new entry signals (if no position) ===
             if len(self.positions) == 0 and len(self.pending_entry_orders) == 0:
@@ -522,6 +528,9 @@ class VWAPBacktestEngine:
                 stop_loss = entry_order.filled_price + 150
                 take_profit = entry_order.filled_price - 200
 
+        # Enable trailing TP for trend continuation trades
+        use_trailing = signal.signal_type == 'trend_continuation' if signal else False
+
         position = BacktestPosition(
             position_id=pos_id,
             direction=entry_order.direction,
@@ -532,7 +541,8 @@ class VWAPBacktestEngine:
             take_profit=take_profit,
             signal=signal,  # Store the signal!
             highest_price=entry_order.filled_price,
-            lowest_price=entry_order.filled_price
+            lowest_price=entry_order.filled_price,
+            use_trailing_tp=use_trailing
         )
 
         # Create TP and SL limit orders
@@ -563,6 +573,63 @@ class VWAPBacktestEngine:
         self.stats.total_fees += entry_fee
 
         tqdm.write(f"[ENTRY] {entry_order.direction} @ ${entry_order.filled_price:,.0f}")
+
+    def _update_trailing_tp(self, position: BacktestPosition, current_price: float):
+        """
+        Update trailing take profit for trend continuation trades
+
+        Logic:
+        - Activate trailing once price moves 50% toward TP
+        - Trail TP to lock in 60% of unrealized profit
+        - Never move TP closer (only further)
+        """
+        if not position.tp_order:
+            return
+
+        # Calculate unrealized P&L
+        if position.direction == 'LONG':
+            unrealized_pnl = current_price - position.entry_price
+            target_distance = position.take_profit - position.entry_price
+
+            # Activate trailing once we're 50% to target
+            if not position.trailing_activated:
+                if unrealized_pnl >= target_distance * 0.5:
+                    position.trailing_activated = True
+                    tqdm.write(f"[TRAILING] LONG trailing activated @ ${current_price:,.0f} (50% to target)")
+
+            # Trail TP if activated
+            if position.trailing_activated:
+                # Lock in 60% of unrealized profit
+                new_tp = position.entry_price + (unrealized_pnl * 0.6)
+
+                # Only move TP up (never down)
+                if new_tp > position.take_profit:
+                    old_tp = position.take_profit
+                    position.take_profit = new_tp
+                    position.tp_order.limit_price = new_tp
+                    tqdm.write(f"[TRAILING] LONG TP moved ${old_tp:,.0f} -> ${new_tp:,.0f}")
+
+        else:  # SHORT
+            unrealized_pnl = position.entry_price - current_price
+            target_distance = position.entry_price - position.take_profit
+
+            # Activate trailing once we're 50% to target
+            if not position.trailing_activated:
+                if unrealized_pnl >= target_distance * 0.5:
+                    position.trailing_activated = True
+                    tqdm.write(f"[TRAILING] SHORT trailing activated @ ${current_price:,.0f} (50% to target)")
+
+            # Trail TP if activated
+            if position.trailing_activated:
+                # Lock in 60% of unrealized profit
+                new_tp = position.entry_price - (unrealized_pnl * 0.6)
+
+                # Only move TP down (never up)
+                if new_tp < position.take_profit:
+                    old_tp = position.take_profit
+                    position.take_profit = new_tp
+                    position.tp_order.limit_price = new_tp
+                    tqdm.write(f"[TRAILING] SHORT TP moved ${old_tp:,.0f} -> ${new_tp:,.0f}")
 
     def _close_position(self, position: BacktestPosition, timestamp: int, exit_price: float, reason: str):
         """Close position"""
