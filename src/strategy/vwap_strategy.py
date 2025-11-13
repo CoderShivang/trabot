@@ -298,12 +298,12 @@ class VWAPStrategy:
         # Components
         self.vwap_calc = VWAPCalculator()
         self.sr_detector = EnhancedSRDetector(
-            min_consolidation_bars=10,  # Reduced from 15 to find more zones
-            max_consolidation_range_pct=0.025,  # Increased from 2% to 2.5% for BTC volatility
-            min_touches=3,
-            min_strength=30,  # Lowered from 40 to allow weaker zones
-            max_volatility=0.012,  # Increased from 0.8% to 1.2% to be less strict
-            max_trend_slope=0.05  # Increased from 3% to 5% to allow more trending areas
+            min_consolidation_bars=8,  # Reduced from 10 for more zones
+            max_consolidation_range_pct=0.03,  # Increased from 2.5% to 3% for BTC volatility
+            min_touches=2,  # Reduced from 3 to allow zones with fewer touches
+            min_strength=20,  # Lowered from 30 to allow weaker zones
+            max_volatility=0.015,  # Increased from 1.2% to 1.5% to be less strict
+            max_trend_slope=0.10  # Increased from 5% to 10% to allow more trending areas
         )
 
         # Parameters (can be tuned)
@@ -311,7 +311,7 @@ class VWAPStrategy:
         self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
         self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
         self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
-        self.min_zone_strength = self.config.get('min_zone_strength', 30)  # Min zone quality (lowered to match detector)
+        self.min_zone_strength = self.config.get('min_zone_strength', 20)  # Min zone quality (lowered to match detector)
         self.require_htf_confluence = self.config.get('require_htf_confluence', False)  # Require 5m/15m confirmation
 
         # State
@@ -359,7 +359,7 @@ class VWAPStrategy:
 
         # Debug logging - always log zone stats
         all_1m_zones = self.sr_detector.zones_by_tf.get('1m', [])
-        logger.info(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price (±${self.zone_proximity}): {len(zones_near_price.get('1m', []))} | Strong (≥{self.min_zone_strength}): {len(strong_zones)}")
+        logger.info(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price (+/-${self.zone_proximity}): {len(zones_near_price.get('1m', []))} | Strong (>={self.min_zone_strength}): {len(strong_zones)}")
 
         if strong_zones:
             for zone in strong_zones[:3]:  # Log first 3

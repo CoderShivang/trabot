@@ -207,10 +207,10 @@ class EnhancedSRDetector:
         current_timestamp = int(datetime.now().timestamp() * 1000)
 
         for start, end in consolidations:
-            # Filter choppy areas (matching user's red ellipses)
-            if self._is_choppy_area(recent_df, start, end):
-                choppy_filtered += 1
-                continue
+            # Filter choppy areas (matching user's red ellipses) - TEMPORARILY DISABLED FOR DEBUGGING
+            # if self._is_choppy_area(recent_df, start, end):
+            #     choppy_filtered += 1
+            #     continue
 
             zone = self._extract_zone(recent_df, start, end, timeframe, current_timestamp)
             if zone:
@@ -332,6 +332,7 @@ class EnhancedSRDetector:
                     rejections += 1  # Rejection from resistance
 
         if touches < self.min_touches:
+            logger.debug(f"[SR] Zone rejected: only {touches} touches (need {self.min_touches})")
             return None
 
         # Determine zone type
