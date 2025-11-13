@@ -129,6 +129,7 @@ class VWAPBacktestEngine:
         self.pending_entry_orders: List[LimitOrder] = []
         self.closed_trades: List[BacktestPosition] = []
         self.stats = BacktestStats()
+        self.order_signals: Dict[str, TradeSignal] = {}  # Map order_id to signal
 
         # Results directory
         self.results_dir = Path('data/vwap_backtest')
@@ -324,9 +325,12 @@ class VWAPBacktestEngine:
                 self._open_position(order, timestamp)
                 self.stats.entry_fills += 1
 
-        # Remove filled/timeout orders
+        # Remove filled/timeout orders and cleanup signal mappings
         for order in filled_orders:
             self.pending_entry_orders.remove(order)
+            # Clean up signal mapping
+            if order.order_id in self.order_signals:
+                del self.order_signals[order.order_id]
 
     def _check_position_fills(self, timestamp: int, high: float, low: float):
         """Check if TP or SL orders get filled"""
@@ -409,6 +413,7 @@ class VWAPBacktestEngine:
         )
 
         self.pending_entry_orders.append(order)
+        self.order_signals[order_id] = signal  # Store signal for later
 
         logger.info(f"\n[SIGNAL] {signal.direction} {signal.signal_type}")
         logger.info(f"  Entry (Limit): ${signal.entry_price:,.2f}")
@@ -419,20 +424,23 @@ class VWAPBacktestEngine:
 
     def _open_position(self, entry_order: LimitOrder, timestamp: int):
         """Open position after entry limit order fills"""
-        # Find signal (stored in pending orders)
-        # For now, reconstruct from order data
-        # In production, you'd store the signal reference
+        # Get the signal from the order_signals mapping
+        signal = self.order_signals.get(entry_order.order_id)
 
         pos_id = f"POS_{timestamp}_{entry_order.direction}"
 
-        # Calculate TP/SL from entry
-        # This should come from the signal, but for simplicity:
-        if entry_order.direction == 'LONG':
-            stop_loss = entry_order.filled_price - 150
-            take_profit = entry_order.filled_price + 200
+        # Get TP/SL from signal, or use defaults
+        if signal:
+            stop_loss = signal.stop_loss
+            take_profit = signal.take_profit
         else:
-            stop_loss = entry_order.filled_price + 150
-            take_profit = entry_order.filled_price - 200
+            # Fallback defaults
+            if entry_order.direction == 'LONG':
+                stop_loss = entry_order.filled_price - 150
+                take_profit = entry_order.filled_price + 200
+            else:
+                stop_loss = entry_order.filled_price + 150
+                take_profit = entry_order.filled_price - 200
 
         position = BacktestPosition(
             position_id=pos_id,
@@ -442,7 +450,7 @@ class VWAPBacktestEngine:
             quantity=entry_order.quantity,
             stop_loss=stop_loss,
             take_profit=take_profit,
-            signal=None,  # Would store signal here
+            signal=signal,  # Store the signal!
             highest_price=entry_order.filled_price,
             lowest_price=entry_order.filled_price
         )
@@ -607,6 +615,113 @@ class VWAPBacktestEngine:
             json.dump(results, f, indent=2)
 
         logger.info(f"\n[RESULTS] Saved to: {results_file}")
+
+        # Also save detailed CSV for trade analysis
+        self._save_trades_csv(timestamp)
+
+    def _save_trades_csv(self, timestamp: int):
+        """Save detailed trade log to CSV with IST timestamps"""
+        import csv
+        from datetime import datetime, timezone, timedelta
+
+        csv_file = self.results_dir / f'trades_vwap_{self.symbol}_{timestamp}.csv'
+
+        # IST is UTC+5:30
+        ist_offset = timedelta(hours=5, minutes=30)
+
+        with open(csv_file, 'w', newline='', encoding='utf-8') as f:
+            fieldnames = [
+                'Trade_ID',
+                'Entry_Day',
+                'Entry_Date_IST',
+                'Entry_Time_IST',
+                'Entry_DateTime_UTC',
+                'Direction',
+                'Signal_Type',
+                'Entry_Price',
+                'Exit_Price',
+                'Exit_Day',
+                'Exit_Date_IST',
+                'Exit_Time_IST',
+                'Exit_DateTime_UTC',
+                'Exit_Reason',
+                'Quantity',
+                'Stop_Loss',
+                'Take_Profit',
+                'PNL_$',
+                'PNL_%',
+                'Fees_$',
+                'Net_PNL_$',
+                'Duration_Minutes',
+                'Highest_Price',
+                'Lowest_Price',
+                'Confidence_%',
+                'Signal_Reason',
+                'VWAP_Band',
+                'SR_Zone_Center',
+                'SR_Zone_Type',
+                'SR_Zone_Strength'
+            ]
+
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for i, trade in enumerate(self.closed_trades, 1):
+                # Convert entry time to IST
+                entry_utc = datetime.fromtimestamp(trade.entry_time / 1000, tz=timezone.utc)
+                entry_ist = entry_utc + ist_offset
+
+                # Convert exit time to IST
+                exit_utc = datetime.fromtimestamp(trade.exit_time / 1000, tz=timezone.utc) if trade.exit_time else None
+                exit_ist = (exit_utc + ist_offset) if exit_utc else None
+
+                # Calculate fees (entry + exit)
+                fees = (trade.entry_price * trade.quantity * self.maker_fee * 2) # Entry + Exit
+
+                # Get signal information
+                signal_reason = trade.signal.reason if trade.signal else "N/A"
+                confidence = trade.signal.confidence if trade.signal else 0
+                vwap_band = f"${trade.signal.vwap_band:,.2f}" if trade.signal else "N/A"
+                sr_zone_center = f"${trade.signal.sr_zone.center:,.2f}" if (trade.signal and trade.signal.sr_zone) else "N/A"
+                sr_zone_type = trade.signal.sr_zone.zone_type if (trade.signal and trade.signal.sr_zone) else "N/A"
+                sr_zone_strength = trade.signal.sr_zone.strength if (trade.signal and trade.signal.sr_zone) else "N/A"
+
+                row = {
+                    'Trade_ID': i,
+                    'Entry_Day': entry_ist.strftime('%A'),
+                    'Entry_Date_IST': entry_ist.strftime('%Y-%m-%d'),
+                    'Entry_Time_IST': entry_ist.strftime('%H:%M:%S'),
+                    'Entry_DateTime_UTC': entry_utc.strftime('%Y-%m-%d %H:%M:%S'),
+                    'Direction': trade.direction,
+                    'Signal_Type': trade.signal.signal_type if trade.signal else "N/A",
+                    'Entry_Price': f"{trade.entry_price:.2f}",
+                    'Exit_Price': f"{trade.exit_price:.2f}" if trade.exit_price else "N/A",
+                    'Exit_Day': exit_ist.strftime('%A') if exit_ist else "N/A",
+                    'Exit_Date_IST': exit_ist.strftime('%Y-%m-%d') if exit_ist else "N/A",
+                    'Exit_Time_IST': exit_ist.strftime('%H:%M:%S') if exit_ist else "N/A",
+                    'Exit_DateTime_UTC': exit_utc.strftime('%Y-%m-%d %H:%M:%S') if exit_utc else "N/A",
+                    'Exit_Reason': trade.exit_reason or "N/A",
+                    'Quantity': f"{trade.quantity:.4f}",
+                    'Stop_Loss': f"{trade.stop_loss:.2f}",
+                    'Take_Profit': f"{trade.take_profit:.2f}",
+                    'PNL_$': f"{trade.pnl:.2f}" if trade.pnl else "0.00",
+                    'PNL_%': f"{trade.pnl_pct:.2f}" if trade.pnl_pct else "0.00",
+                    'Fees_$': f"{fees:.2f}",
+                    'Net_PNL_$': f"{(trade.pnl - fees):.2f}" if trade.pnl else f"{-fees:.2f}",
+                    'Duration_Minutes': f"{((trade.exit_time - trade.entry_time) / 1000 / 60):.1f}" if trade.exit_time else "N/A",
+                    'Highest_Price': f"{trade.highest_price:.2f}",
+                    'Lowest_Price': f"{trade.lowest_price:.2f}",
+                    'Confidence_%': f"{confidence:.0f}",
+                    'Signal_Reason': signal_reason,
+                    'VWAP_Band': vwap_band,
+                    'SR_Zone_Center': sr_zone_center,
+                    'SR_Zone_Type': sr_zone_type,
+                    'SR_Zone_Strength': sr_zone_strength
+                }
+
+                writer.writerow(row)
+
+        logger.info(f"[CSV] Detailed trade log saved to: {csv_file}")
 
     def _display_results(self):
         """Display backtest results"""

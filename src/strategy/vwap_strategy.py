@@ -357,7 +357,7 @@ class VWAPStrategy:
                                 stop_loss=entry - self.stop_points,
                                 take_profit=entry + self.target_points,
                                 confidence=confidence,
-                                reason=f"LONG Mean Reversion: -1σ (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength})",
+                                reason=f"LONG Mean Reversion: -1std (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength})",
                                 vwap_band=vwap.lower_1std,
                                 sr_zone=zone
                             ))
@@ -381,7 +381,7 @@ class VWAPStrategy:
                                 stop_loss=entry - self.stop_points,
                                 take_profit=entry + self.target_points,
                                 confidence=confidence,
-                                reason=f"LONG Trend: Pullback to +1σ (${vwap.upper_1std:,.0f}) in uptrend",
+                                reason=f"LONG Trend: Pullback to +1std (${vwap.upper_1std:,.0f}) in uptrend",
                                 vwap_band=vwap.upper_1std,
                                 sr_zone=zone
                             ))
@@ -407,7 +407,7 @@ class VWAPStrategy:
                                 stop_loss=entry + self.stop_points,
                                 take_profit=entry - self.target_points,
                                 confidence=confidence,
-                                reason=f"SHORT Mean Reversion: +1σ (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength})",
+                                reason=f"SHORT Mean Reversion: +1std (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength})",
                                 vwap_band=vwap.upper_1std,
                                 sr_zone=zone
                             ))
@@ -431,7 +431,7 @@ class VWAPStrategy:
                                 stop_loss=entry + self.stop_points,
                                 take_profit=entry - self.target_points,
                                 confidence=confidence,
-                                reason=f"SHORT Trend: Pullback to -1σ (${vwap.lower_1std:,.0f}) in downtrend",
+                                reason=f"SHORT Trend: Pullback to -1std (${vwap.lower_1std:,.0f}) in downtrend",
                                 vwap_band=vwap.lower_1std,
                                 sr_zone=zone
                             ))
