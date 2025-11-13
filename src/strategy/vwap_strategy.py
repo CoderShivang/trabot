@@ -311,8 +311,8 @@ class VWAPStrategy:
         self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
         self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
         self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
-        self.min_zone_strength = self.config.get('min_zone_strength', 60)  # Min zone quality
-        self.require_htf_confluence = self.config.get('require_htf_confluence', True)  # Require 5m/15m confirmation
+        self.min_zone_strength = self.config.get('min_zone_strength', 40)  # Min zone quality
+        self.require_htf_confluence = self.config.get('require_htf_confluence', False)  # Require 5m/15m confirmation
 
         # State
         self.current_zones = []
