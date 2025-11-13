@@ -249,14 +249,12 @@ class SimpleConsolidationDetector:
         if touches < 3:  # Need at least 3 touches
             return None
 
-        # Determine zone type based on position
-        close_prices = window['close']
-        if close_prices.mean() < level:
-            zone_type = 'resistance'
-        elif close_prices.mean() > level:
-            zone_type = 'support'
-        else:
-            zone_type = 'both'
+        # Determine zone type based on position relative to CURRENT price
+        # THIS IS CRITICAL: Zones BELOW price = support, zones ABOVE price = resistance
+        # The consolidation created a zone - now determine what role it plays
+        # We'll determine this dynamically when checking signals based on current price position
+        # For now, mark as 'both' and let signal generation decide based on price position
+        zone_type = 'both'
 
         # Calculate strength
         strength = min(100, int((touches / len(window)) * 100 + (end - start) / 2))
@@ -341,9 +339,41 @@ class VWAPStrategy:
         self._analyze_count = 0  # For periodic logging
         self._last_regime = None  # Track regime changes
 
+    def _calculate_market_regime(self, df_1d: pd.DataFrame, current_price: float) -> str:
+        """
+        Calculate market regime based on 100 Day SMA
+
+        User requirement: Price must be 1200-1500+ above/below 100 SMA for regime bias
+
+        Returns: 'bullish_regime', 'bearish_regime', or 'neutral_regime'
+        """
+        if df_1d is None or len(df_1d) < 100:
+            return 'neutral_regime'
+
+        # Calculate 100 day SMA
+        sma_100 = df_1d['close'].iloc[-100:].mean()
+
+        # Calculate distance from SMA
+        distance = current_price - sma_100
+        abs_distance = abs(distance)
+
+        # User requirement: 1200-1500+ distance for regime classification
+        if distance > 1200:
+            regime = 'bullish_regime'
+            logger.info(f"[REGIME-100SMA] BULLISH - Price ${current_price:,.0f} is ${distance:,.0f} above 100 SMA (${sma_100:,.0f})")
+        elif distance < -1200:
+            regime = 'bearish_regime'
+            logger.info(f"[REGIME-100SMA] BEARISH - Price ${current_price:,.0f} is ${abs_distance:,.0f} below 100 SMA (${sma_100:,.0f})")
+        else:
+            regime = 'neutral_regime'
+            if self._analyze_count % 100 == 0:  # Log occasionally
+                logger.debug(f"[REGIME-100SMA] NEUTRAL - Price ${current_price:,.0f} is ${abs_distance:,.0f} from 100 SMA (${sma_100:,.0f})")
+
+        return regime
+
     def _detect_market_regime(self, df: pd.DataFrame, current_price: float) -> str:
         """
-        Detect if market is range-bound or trending
+        Detect if market is range-bound or trending (SHORT TERM)
 
         Returns: 'ranging', 'trending_up', or 'trending_down'
         """
@@ -385,7 +415,8 @@ class VWAPStrategy:
 
     def analyze(self, df: pd.DataFrame, current_price: float,
                 df_5m: Optional[pd.DataFrame] = None,
-                df_15m: Optional[pd.DataFrame] = None) -> List[TradeSignal]:
+                df_15m: Optional[pd.DataFrame] = None,
+                df_1d: Optional[pd.DataFrame] = None) -> List[TradeSignal]:
         """
         Analyze market and find trade setups with multi-timeframe confluence
 
@@ -394,6 +425,7 @@ class VWAPStrategy:
             current_price: Current market price
             df_5m: Optional 5m OHLCV DataFrame for HTF zones
             df_15m: Optional 15m OHLCV DataFrame for HTF zones
+            df_1d: Optional daily OHLCV DataFrame for 100 SMA and daily S/R zones
 
         Returns:
             List of TradeSignal objects (sorted by confidence)
@@ -401,6 +433,9 @@ class VWAPStrategy:
         if len(df) < 50:
             logger.warning("[VWAP] Insufficient data for analysis")
             return []
+
+        # Calculate market regime based on 100 Day SMA
+        market_regime = self._calculate_market_regime(df_1d, current_price) if df_1d is not None and len(df_1d) >= 100 else 'neutral'
 
         # Detect market regime (ranging vs trending)
         regime = self._detect_market_regime(df, current_price)
@@ -412,7 +447,7 @@ class VWAPStrategy:
             logger.info(f"[REGIME] Market is {regime}")
         self._last_regime = regime
 
-        # Update S/R zones for all timeframes
+        # Update S/R zones for all timeframes including daily
         self.sr_detector.update_zones(df, timeframe='1m', lookback=200)
 
         if df_5m is not None and len(df_5m) >= 50:
@@ -421,16 +456,25 @@ class VWAPStrategy:
         if df_15m is not None and len(df_15m) >= 50:
             self.sr_detector.update_zones(df_15m, timeframe='15m', lookback=100)
 
+        if df_1d is not None and len(df_1d) >= 30:
+            # Detect daily S/R zones for range identification
+            self.sr_detector.update_zones(df_1d, timeframe='1d', lookback=60)
+
         # Get zones near current price (only active, not invalidated)
         zones_near_price = self.sr_detector.get_zones_near_price(
             current_price,
-            timeframes=['1m'],
+            timeframes=['1m', '1d'],
             proximity=self.zone_proximity
         )
 
         # Filter by strength
         strong_zones = [z for z in zones_near_price.get('1m', [])
                        if z.strength >= self.min_zone_strength and not z.invalidated]
+
+        # Get daily zones for counter-trend trade allowance
+        daily_zones = [z for z in zones_near_price.get('1d', [])
+                      if z.strength >= self.min_zone_strength and not z.invalidated]
+        has_daily_sr = len(daily_zones) > 0
 
         # Debug logging - only log when strong zones exist (reduces spam)
         if strong_zones:
@@ -462,21 +506,41 @@ class VWAPStrategy:
         # === LONG SETUPS ===
 
         # 1. Mean Reversion Long: -1s + Support
-        if bias in ['bullish_mean_reversion', 'neutral']:
+        # Market regime filter: In bearish regime, only allow if near daily S/R or high confidence
+        long_eligible_zones = strong_zones.copy()
+        if market_regime == 'bearish_regime':
+            # In bearish regime, be more selective with longs
+            if not has_daily_sr:
+                # Only high confidence zones (2+ touches) allowed
+                long_eligible_zones = [z for z in strong_zones if z.touches >= 2]
+                if len(long_eligible_zones) == 0:
+                    logger.debug(f"[REGIME-FILTER] Skipping LONGs - bearish regime without daily S/R or high confidence zones")
+
+        if bias in ['bullish_mean_reversion', 'neutral'] and len(long_eligible_zones) > 0:
             dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
 
             if dist_to_lower <= self.band_proximity:
-                support_zones = [z for z in strong_zones if z.zone_type in ['support', 'both']]
+                support_zones = [z for z in long_eligible_zones if z.zone_type in ['support', 'both']]
                 if len(support_zones) > 0:
                     logger.info(f"[CHECK-LONG-MR] Found {len(support_zones)} support zones near -1s band (dist:{dist_to_lower:.0f} <= {self.band_proximity})")
             else:
-                if len(strong_zones) > 0:
+                if len(long_eligible_zones) > 0:
                     logger.info(f"[SKIP-LONG-MR] Distance to -1s band too far: {dist_to_lower:.0f} > {self.band_proximity}")
 
             if dist_to_lower <= self.band_proximity:
 
-                for zone in strong_zones:
-                    if zone.zone_type in ['support', 'both'] and zone.is_near(current_price, self.zone_proximity):
+                for zone in long_eligible_zones:
+                    # CRITICAL: Check zone position relative to CURRENT price dynamically
+                    # For LONG: zone must be BELOW price (acting as support)
+                    # Don't rely solely on historical zone_type classification
+                    is_support_now = zone.level < current_price or abs(zone.level - current_price) / current_price < 0.002
+
+                    if (zone.zone_type in ['support', 'both'] or is_support_now) and zone.is_near(current_price, self.zone_proximity):
+                        # Additional safety: verify zone is below or at current price
+                        if zone.level > current_price + 50:
+                            logger.debug(f"[SAFETY] Skipping LONG - zone ${zone.level:,.0f} is above price ${current_price:,.0f}")
+                            continue
+
                         # Check HTF confluence
                         has_htf = self.sr_detector.has_htf_confluence(
                             current_price,
@@ -545,12 +609,32 @@ class VWAPStrategy:
         # === SHORT SETUPS ===
 
         # 3. Mean Reversion Short: +1σ + Resistance
-        if bias in ['bearish_mean_reversion', 'neutral']:
+        # Market regime filter: In bullish regime, only allow if near daily S/R or high confidence
+        short_eligible_zones = strong_zones.copy()
+        if market_regime == 'bullish_regime':
+            # In bullish regime, be more selective with shorts
+            if not has_daily_sr:
+                # Only high confidence zones (2+ touches) allowed
+                short_eligible_zones = [z for z in strong_zones if z.touches >= 2]
+                if len(short_eligible_zones) == 0:
+                    logger.debug(f"[REGIME-FILTER] Skipping SHORTs - bullish regime without daily S/R or high confidence zones")
+
+        if bias in ['bearish_mean_reversion', 'neutral'] and len(short_eligible_zones) > 0:
             dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
 
             if dist_to_upper <= self.band_proximity:
-                for zone in strong_zones:
-                    if zone.zone_type in ['resistance', 'both'] and zone.is_near(current_price, self.zone_proximity):
+                for zone in short_eligible_zones:
+                    # CRITICAL: Check zone position relative to CURRENT price dynamically
+                    # For SHORT: zone must be ABOVE price (acting as resistance)
+                    # Don't rely solely on historical zone_type classification
+                    is_resistance_now = zone.level > current_price or abs(zone.level - current_price) / current_price < 0.002
+
+                    if (zone.zone_type in ['resistance', 'both'] or is_resistance_now) and zone.is_near(current_price, self.zone_proximity):
+                        # Additional safety: verify zone is above or at current price
+                        if zone.level < current_price - 50:
+                            logger.debug(f"[SAFETY] Skipping SHORT - zone ${zone.level:,.0f} is below price ${current_price:,.0f}")
+                            continue
+
                         # Check HTF confluence
                         has_htf = self.sr_detector.has_htf_confluence(
                             current_price,

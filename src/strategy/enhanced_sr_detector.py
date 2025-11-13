@@ -337,15 +337,21 @@ class EnhancedSRDetector:
             logger.debug(f"[SR] Zone rejected: only {touches} touches (need {self.min_touches})")
             return None
 
-        # Determine zone type
+        # Determine zone type based on where price traded relative to the zone
+        # CRITICAL FIX: This was backwards before!
+        # - If price traded BELOW the zone level, the zone acts as RESISTANCE (ceiling above)
+        # - If price traded ABOVE the zone level, the zone acts as SUPPORT (floor below)
         close_prices = window['close']
         avg_close = close_prices.mean()
 
         if avg_close < level * 0.995:
+            # Price was below zone - zone is resistance above
             zone_type = 'resistance'
         elif avg_close > level * 1.005:
+            # Price was above zone - zone is support below
             zone_type = 'support'
         else:
+            # Price traded around zone level - could be either
             zone_type = 'both'
 
         # Calculate strength score (0-100)

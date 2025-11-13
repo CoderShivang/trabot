@@ -271,11 +271,12 @@ class VWAPBacktestEngine:
         logger.info("[BACKTEST] Starting simulation...")
         logger.info("[MTF] Preparing multi-timeframe data (1m, 5m, 15m)...")
 
-        # Resample 1m data to 5m and 15m for HTF S/R zones
+        # Resample 1m data to 5m, 15m, and 1D for HTF S/R zones and trend filter
         df_5m = self._resample_ohlcv(df, '5min')  # 5 minutes
         df_15m = self._resample_ohlcv(df, '15min')  # 15 minutes
+        df_1d = self._resample_ohlcv(df, '1D')  # 1 day
 
-        logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars")
+        logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars | 1D: {len(df_1d)} bars")
 
         # Need lookback for strategy
         lookback = 200
@@ -301,6 +302,7 @@ class VWAPBacktestEngine:
             current_time = current_bar['timestamp']
             hist_df_5m = df_5m[df_5m['timestamp'] <= current_time].copy()
             hist_df_15m = df_15m[df_15m['timestamp'] <= current_time].copy()
+            hist_df_1d = df_1d[df_1d['timestamp'] <= current_time].copy()
 
             # === 1. Check pending entry orders for fills ===
             self._check_entry_fills(timestamp, high, low)
@@ -320,7 +322,8 @@ class VWAPBacktestEngine:
                     hist_df,
                     close,
                     df_5m=hist_df_5m if len(hist_df_5m) >= 50 else None,
-                    df_15m=hist_df_15m if len(hist_df_15m) >= 50 else None
+                    df_15m=hist_df_15m if len(hist_df_15m) >= 50 else None,
+                    df_1d=hist_df_1d if len(hist_df_1d) >= 100 else None  # Need 100+ days for 100 SMA
                 )
 
                 if signals:
