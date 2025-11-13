@@ -23,10 +23,12 @@ import json
 from pathlib import Path
 import pandas as pd
 import numpy as np
+from tqdm import tqdm
 
 from src.data.binance_client import BinanceClient
 from src.strategy.vwap_strategy import VWAPStrategy, TradeSignal
 from src.utils.logger import setup_logger
+from src.visualization.dashboard import VWAPDashboard
 
 logger = setup_logger(__name__)
 
@@ -193,8 +195,17 @@ class VWAPBacktestEngine:
 
         # Generate results
         self._calculate_stats()
-        self._save_results()
+        results_path = self._save_results()
         self._display_results()
+
+        # Print trade summary
+        self._print_trade_summary()
+
+        # Generate dashboard
+        logger.info("\n[DASHBOARD] Generating interactive visualization...")
+        dashboard = VWAPDashboard(results_path, df)
+        dashboard_path = dashboard.generate()
+        logger.info(f"[DASHBOARD] Open in browser: file://{Path(dashboard_path).absolute()}")
 
     async def _fetch_historical_data(self, start_date: datetime, end_date: datetime) -> List:
         """Fetch historical klines from Binance mainnet"""
@@ -241,19 +252,25 @@ class VWAPBacktestEngine:
         4. Manage open positions (TP/SL limit orders)
         5. Multi-timeframe S/R zone detection (1m, 5m, 15m)
         """
-        logger.info("[BACKTEST] Starting simulation...\n")
+        logger.info("[BACKTEST] Starting simulation...")
         logger.info("[MTF] Preparing multi-timeframe data (1m, 5m, 15m)...")
 
         # Resample 1m data to 5m and 15m for HTF S/R zones
         df_5m = self._resample_ohlcv(df, '5min')  # 5 minutes
         df_15m = self._resample_ohlcv(df, '15min')  # 15 minutes
 
-        logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars\n")
+        logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars")
 
         # Need lookback for strategy
         lookback = 200
 
+        # Progress bar for simulation
+        logger.info(f"[BACKTEST] Simulating {len(df) - lookback} bars...\n")
+        pbar = tqdm(total=len(df) - lookback, desc="Backtesting", unit="bar", ncols=100)
+
         for idx in range(lookback, len(df)):
+            pbar.update(1)
+            pbar.set_postfix({"Trades": len(self.closed_trades), "Capital": f"${self.current_capital:.0f}"})
             current_bar = df.iloc[idx]
             timestamp = int(current_bar['timestamp'].timestamp() * 1000)
             open_price = float(current_bar['open'])
@@ -293,17 +310,14 @@ class VWAPBacktestEngine:
                 if signals:
                     # Take best signal
                     best_signal = signals[0]
-                    logger.info(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f} | {best_signal.reason}")
+                    # Use tqdm.write to print without disrupting progress bar
+                    tqdm.write(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f}")
 
                     if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
                         self._place_entry_order(best_signal, timestamp)
-                    else:
-                        logger.info(f"[SIGNAL] Skipped - confidence {best_signal.confidence:.0f} < 50")
 
-            # Progress
-            if idx % 500 == 0:
-                progress = (idx / len(df)) * 100
-                logger.info(f"  Progress: {progress:.1f}% | Trades: {len(self.closed_trades)} | Capital: ${self.current_capital:,.2f}")
+        # Close progress bar
+        pbar.close()
 
         # Close any remaining positions at end
         self._close_all_positions(df.iloc[-1], "backtest_end")
@@ -528,7 +542,7 @@ class VWAPBacktestEngine:
         self.current_capital -= entry_fee
         self.stats.total_fees += entry_fee
 
-        logger.info(f"[POSITION] Opened {entry_order.direction} at ${entry_order.filled_price:,.2f} (qty: {entry_order.quantity:.4f})")
+        tqdm.write(f"[ENTRY] {entry_order.direction} @ ${entry_order.filled_price:,.0f}")
 
     def _close_position(self, position: BacktestPosition, timestamp: int, exit_price: float, reason: str):
         """Close position"""
@@ -558,7 +572,7 @@ class VWAPBacktestEngine:
 
         # Log trade
         duration_mins = (timestamp - position.entry_time) / 1000 / 60
-        logger.info(f"[CLOSE] {position.direction} | {reason} | P&L: ${net_pnl:,.2f} ({pnl_pct:.2f}%) | Duration: {duration_mins:.1f}m")
+        tqdm.write(f"[EXIT] {reason} | P&L: ${net_pnl:,.2f} ({pnl_pct:+.2f}%)")
 
     def _close_all_positions(self, last_bar, reason: str):
         """Force close all positions at end of backtest"""
@@ -691,6 +705,8 @@ class VWAPBacktestEngine:
 
         # Also save detailed CSV for trade analysis
         self._save_trades_csv(timestamp)
+
+        return str(results_file)
 
     def _save_trades_csv(self, timestamp: int):
         """Save detailed trade log to CSV with IST timestamps"""
@@ -869,3 +885,30 @@ class VWAPBacktestEngine:
         """Convert timeframe to milliseconds"""
         units = {'m': 60000, 'h': 3600000, 'd': 86400000}
         return int(timeframe[:-1]) * units[timeframe[-1]]
+
+    def _print_trade_summary(self):
+        """Print detailed trade summary to terminal"""
+        logger.info(f"\n{'='*100}")
+        logger.info("TRADE SUMMARY")
+        logger.info(f"{'='*100}\n")
+
+        if not self.closed_trades:
+            logger.info("No trades executed.")
+            return
+
+        # Print each trade
+        for i, trade in enumerate(self.closed_trades, 1):
+            # Format entry reason (truncate if too long)
+            reason = trade.signal.reason if trade.signal else "N/A"
+            if len(reason) > 70:
+                reason = reason[:67] + "..."
+
+            # Determine if win or loss
+            profit_indicator = "✓" if trade.pnl > 0 else "✗"
+
+            logger.info(f"Trade #{i:3d} | {trade.direction:5s} | Entry: ${trade.entry_price:9,.2f} | Exit: ${trade.exit_price:9,.2f} | "
+                       f"P&L: ${trade.pnl:7,.2f} ({trade.pnl_pct:+6.2f}%) {profit_indicator} | {trade.exit_reason:2s}")
+            logger.info(f"          Reason: {reason}")
+            logger.info("")
+
+        logger.info(f"{'='*100}\n")
