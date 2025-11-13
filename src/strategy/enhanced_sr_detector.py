@@ -36,6 +36,12 @@ class EnhancedSRZone:
     invalidated: bool = False
     invalidation_count: int = 0  # How many times price broke through
 
+    # Breakout/Bounce tracking
+    bounces: int = 0  # Clean bounces off zone
+    breakouts: int = 0  # Decisive breaks through zone
+    liquidity_grabs: int = 0  # Fake breakouts (wick through, close back)
+    last_interaction: str = 'none'  # 'bounce', 'breakout', 'liquidity_grab', 'none'
+
     def is_near(self, price: float, threshold: float = 150) -> bool:
         """Check if price is near this zone"""
         return abs(price - self.level) <= threshold
@@ -90,6 +96,66 @@ class EnhancedSRZone:
                     return True
 
         return False
+
+    def track_interaction(self, close: float, high: float, low: float, prev_close: float) -> str:
+        """
+        Track bounce/breakout/liquidity grab interactions with the zone
+
+        Returns: 'bounce', 'breakout', 'liquidity_grab', or 'none'
+        """
+        # Check if price interacted with zone
+        touched_zone = self.contains(low) or self.contains(high) or self.contains(close)
+
+        if not touched_zone:
+            return 'none'
+
+        # Determine interaction type based on zone type and price action
+        interaction = 'none'
+
+        if self.zone_type == 'support' or (self.zone_type == 'both' and close > self.level):
+            # Support zone interaction
+            if low < self.lower:
+                # Price went below support
+                if close > self.lower:
+                    # LIQUIDITY GRAB: Wick below, close back above
+                    self.liquidity_grabs += 1
+                    interaction = 'liquidity_grab'
+                    logger.debug(f"[SR-LIQ-GRAB] Support @ ${self.level:,.0f} - wick ${low:,.0f}, close ${close:,.0f}")
+                else:
+                    # BREAKOUT: Closed below support
+                    self.breakouts += 1
+                    interaction = 'breakout'
+                    logger.debug(f"[SR-BREAKOUT] Support @ ${self.level:,.0f} broken, close ${close:,.0f}")
+            else:
+                # Clean BOUNCE: Touched but didn't break
+                if prev_close > self.upper and close > self.lower:
+                    self.bounces += 1
+                    interaction = 'bounce'
+                    logger.debug(f"[SR-BOUNCE] Support @ ${self.level:,.0f} held, close ${close:,.0f}")
+
+        elif self.zone_type == 'resistance' or (self.zone_type == 'both' and close < self.level):
+            # Resistance zone interaction
+            if high > self.upper:
+                # Price went above resistance
+                if close < self.upper:
+                    # LIQUIDITY GRAB: Wick above, close back below
+                    self.liquidity_grabs += 1
+                    interaction = 'liquidity_grab'
+                    logger.debug(f"[SR-LIQ-GRAB] Resistance @ ${self.level:,.0f} - wick ${high:,.0f}, close ${close:,.0f}")
+                else:
+                    # BREAKOUT: Closed above resistance
+                    self.breakouts += 1
+                    interaction = 'breakout'
+                    logger.debug(f"[SR-BREAKOUT] Resistance @ ${self.level:,.0f} broken, close ${close:,.0f}")
+            else:
+                # Clean BOUNCE: Touched but didn't break
+                if prev_close < self.lower and close < self.upper:
+                    self.bounces += 1
+                    interaction = 'bounce'
+                    logger.debug(f"[SR-BOUNCE] Resistance @ ${self.level:,.0f} held, close ${close:,.0f}")
+
+        self.last_interaction = interaction
+        return interaction
 
 
 class EnhancedSRDetector:

@@ -555,6 +555,14 @@ class VWAPStrategy:
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
 
+                        # Boost confidence for zones with liquidity grabs (fake breakouts = reversals)
+                        if zone.liquidity_grabs > 0:
+                            confidence += min(15, zone.liquidity_grabs * 5)  # +5 per liquidity grab, max +15
+
+                        # Reduce confidence for zones that broke recently
+                        if zone.last_interaction == 'breakout' and zone.breakouts >= 2:
+                            confidence -= 20  # Penalize broken zones
+
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = max(zone.level - 30, current_price - 50)
 
@@ -646,6 +654,14 @@ class VWAPStrategy:
                             continue
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
+
+                        # Boost confidence for zones with liquidity grabs (fake breakouts = reversals)
+                        if zone.liquidity_grabs > 0:
+                            confidence += min(15, zone.liquidity_grabs * 5)  # +5 per liquidity grab, max +15
+
+                        # Reduce confidence for zones that broke recently
+                        if zone.last_interaction == 'breakout' and zone.breakouts >= 2:
+                            confidence -= 20  # Penalize broken zones
 
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = min(zone.level + 30, current_price + 50)
