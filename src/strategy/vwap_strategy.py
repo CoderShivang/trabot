@@ -309,8 +309,8 @@ class VWAPStrategy:
         # Parameters (can be tuned)
         self.target_points = self.config.get('target_points', 200)  # TP in dollars
         self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
-        self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
-        self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
+        self.band_proximity = self.config.get('band_proximity', 200)  # How close to band (increased for BTC)
+        self.zone_proximity = self.config.get('zone_proximity', 500)  # How close to S/R (increased for BTC)
         self.min_zone_strength = self.config.get('min_zone_strength', 20)  # Min zone quality (lowered to match detector)
         self.require_htf_confluence = self.config.get('require_htf_confluence', False)  # Require 5m/15m confirmation
 
