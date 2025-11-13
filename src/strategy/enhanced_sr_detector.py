@@ -198,7 +198,6 @@ class EnhancedSRDetector:
 
         # Find consolidation periods
         consolidations = self._find_consolidations(recent_df)
-        logger.info(f"[SR-{timeframe}] Found {len(consolidations)} consolidation periods")
 
         # Extract zones from consolidations
         zones = []
@@ -219,7 +218,10 @@ class EnhancedSRDetector:
                 else:
                     weak_filtered += 1
 
-        logger.info(f"[SR-{timeframe}] Zones: {len(zones)} valid | {choppy_filtered} choppy-filtered | {weak_filtered} weak-filtered")
+        # Only log when zones are actually found (reduces spam)
+        if len(zones) > 0:
+            logger.debug(f"[SR-{timeframe}] Found {len(consolidations)} consolidation periods")
+            logger.debug(f"[SR-{timeframe}] Zones: {len(zones)} valid | {choppy_filtered} choppy-filtered | {weak_filtered} weak-filtered")
 
         return zones
 

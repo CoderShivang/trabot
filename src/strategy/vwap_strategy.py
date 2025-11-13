@@ -379,12 +379,11 @@ class VWAPStrategy:
         strong_zones = [z for z in zones_near_price.get('1m', [])
                        if z.strength >= self.min_zone_strength and not z.invalidated]
 
-        # Debug logging - always log zone stats
-        all_1m_zones = self.sr_detector.zones_by_tf.get('1m', [])
-        logger.info(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price (+/-${self.zone_proximity}): {len(zones_near_price.get('1m', []))} | Strong (>={self.min_zone_strength}): {len(strong_zones)}")
-
+        # Debug logging - only log when strong zones exist (reduces spam)
         if strong_zones:
-            for zone in strong_zones[:3]:  # Log first 3
+            all_1m_zones = self.sr_detector.zones_by_tf.get('1m', [])
+            logger.info(f"[ZONES] Found {len(strong_zones)} strong zones near price")
+            for zone in strong_zones[:2]:  # Log first 2
                 logger.info(f"  Zone @ ${zone.level:,.0f} ({zone.zone_type}, str:{zone.strength})")
 
         # Calculate VWAP
@@ -442,7 +441,7 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = max(zone.level - 30, current_price - 50)
 
-                            htf_str = " + HTF✓" if has_htf else ""
+                            htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='LONG',
                                 signal_type='mean_reversion',
@@ -475,7 +474,7 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 60 for initial testing
                             entry = min(vwap.upper_1std, zone.level) - 20
 
-                            htf_str = " + HTF✓" if has_htf else ""
+                            htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='LONG',
                                 signal_type='trend_continuation',
@@ -515,7 +514,7 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = min(zone.level + 30, current_price + 50)
 
-                            htf_str = " + HTF✓" if has_htf else ""
+                            htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='SHORT',
                                 signal_type='mean_reversion',
@@ -548,7 +547,7 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 60 for initial testing
                             entry = max(vwap.lower_1std, zone.level) + 20
 
-                            htf_str = " + HTF✓" if has_htf else ""
+                            htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='SHORT',
                                 signal_type='trend_continuation',
