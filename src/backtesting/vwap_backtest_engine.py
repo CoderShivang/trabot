@@ -76,6 +76,11 @@ class BacktestPosition:
     pnl: Optional[float] = None
     pnl_pct: Optional[float] = None
 
+    # Fees
+    entry_fee: Optional[float] = None
+    exit_fee: Optional[float] = None
+    total_fees: Optional[float] = None
+
 
 @dataclass
 class BacktestStats:
@@ -548,8 +553,9 @@ class VWAPBacktestEngine:
 
         self.positions.append(position)
 
-        # Deduct entry fees
+        # Deduct entry fees and store in position
         entry_fee = entry_order.filled_price * entry_order.quantity * self.maker_fee
+        position.entry_fee = entry_fee
         self.current_capital -= entry_fee
         self.stats.total_fees += entry_fee
 
@@ -569,12 +575,14 @@ class VWAPBacktestEngine:
 
         pnl_pct = (pnl / (position.entry_price * position.quantity)) * 100
 
-        # Deduct exit fees
+        # Deduct exit fees and store in position
         exit_fee = exit_price * position.quantity * self.maker_fee
         net_pnl = pnl - exit_fee
 
         position.pnl = net_pnl
         position.pnl_pct = pnl_pct
+        position.exit_fee = exit_fee
+        position.total_fees = position.entry_fee + exit_fee
 
         self.current_capital += net_pnl
         self.stats.total_fees += exit_fee
@@ -665,8 +673,12 @@ class VWAPBacktestEngine:
                 'exit_price': float(trade.exit_price) if trade.exit_price else None,
                 'exit_time': trade.exit_time,
                 'exit_reason': trade.exit_reason,
+                'quantity': float(trade.quantity),
                 'pnl': float(trade.pnl) if trade.pnl else None,
                 'pnl_pct': float(trade.pnl_pct) if trade.pnl_pct else None,
+                'entry_fee': float(trade.entry_fee) if trade.entry_fee else None,
+                'exit_fee': float(trade.exit_fee) if trade.exit_fee else None,
+                'total_fees': float(trade.total_fees) if trade.total_fees else None,
                 'stop_loss': float(trade.stop_loss),
                 'take_profit': float(trade.take_profit),
                 'duration_minutes': (trade.exit_time - trade.entry_time) / 1000 / 60 if trade.exit_time else None,

@@ -53,6 +53,7 @@ class InteractiveDashboard:
     def _aggregate_daily_pnl(self):
         """Aggregate trades by date and calculate daily P&L"""
         daily_data = {}
+        maker_fee = self.config.get('maker_fee', 0.0002)
 
         for trade in self.trades:
             # Extract date from entry timestamp
@@ -64,11 +65,21 @@ class InteractiveDashboard:
                     'pnl': 0,
                     'trades': 0,
                     'wins': 0,
-                    'losses': 0
+                    'losses': 0,
+                    'total_fees': 0
                 }
 
             daily_data[date]['pnl'] += trade['pnl']
             daily_data[date]['trades'] += 1
+
+            # Get fees for this trade
+            if 'total_fees' in trade and trade['total_fees'] is not None:
+                daily_data[date]['total_fees'] += trade['total_fees']
+            elif 'quantity' in trade:
+                # Calculate fees for old backtests
+                entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                daily_data[date]['total_fees'] += entry_fee + exit_fee
 
             if trade['pnl'] > 0:
                 daily_data[date]['wins'] += 1
@@ -92,6 +103,7 @@ class InteractiveDashboard:
                 'date_str': day['date'].strftime('%Y-%m-%d'),
                 'pnl_str': f"${day['pnl']:,.2f}",
                 'pnl': day['pnl'],  # Hidden field for conditional formatting and sorting
+                'fees_str': f"${day['total_fees']:,.2f}",
                 'trades': day['trades'],
                 'wins': day['wins'],
                 'losses': day['losses'],
@@ -134,6 +146,7 @@ class InteractiveDashboard:
                     columns=[
                         {'name': 'Date', 'id': 'date_str'},
                         {'name': 'Total P&L', 'id': 'pnl_str', 'type': 'numeric'},
+                        {'name': 'Total Fees', 'id': 'fees_str'},
                         {'name': 'Trades', 'id': 'trades'},
                         {'name': 'Wins', 'id': 'wins'},
                         {'name': 'Losses', 'id': 'losses'},
@@ -244,7 +257,8 @@ class InteractiveDashboard:
                         {'name': 'Entry Time', 'id': 'entry_time_str'},
                         {'name': 'Entry Price', 'id': 'entry_price_str'},
                         {'name': 'Exit Price', 'id': 'exit_price_str'},
-                        {'name': 'P&L', 'id': 'pnl_str'},
+                        {'name': 'Fees', 'id': 'fees_str'},
+                        {'name': 'P&L (Net)', 'id': 'pnl_str'},
                         {'name': 'P&L %', 'id': 'pnl_pct_str'},
                         {'name': 'Reason', 'id': 'reason_short'},
                     ],
@@ -302,6 +316,19 @@ class InteractiveDashboard:
             # Format trades for table
             table_data = []
             for i, trade in enumerate(filtered, 1):
+                # Get fees (handle old backtests that don't have fees field)
+                if 'total_fees' in trade and trade['total_fees'] is not None:
+                    fees_str = f"${trade['total_fees']:.2f}"
+                else:
+                    # Calculate fees for old backtests
+                    maker_fee = self.config.get('maker_fee', 0.0002)
+                    if 'quantity' in trade:
+                        entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                        exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                        fees_str = f"${entry_fee + exit_fee:.2f}"
+                    else:
+                        fees_str = "N/A"
+
                 table_data.append({
                     'trade_num': i,
                     'direction': trade['direction'],
@@ -309,6 +336,7 @@ class InteractiveDashboard:
                     'entry_time_str': pd.to_datetime(trade['entry_time'], unit='ms').strftime('%Y-%m-%d %H:%M'),
                     'entry_price_str': f"${trade['entry_price']:,.2f}",
                     'exit_price_str': f"${trade['exit_price']:,.2f}",
+                    'fees_str': fees_str,
                     'pnl_str': f"${trade['pnl']:,.2f}",
                     'pnl_pct_str': f"{trade['pnl_pct']:+.2f}%",
                     'reason_short': trade['signal']['reason'][:60] + '...' if len(trade['signal']['reason']) > 60 else trade['signal']['reason'],
