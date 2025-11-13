@@ -587,6 +587,26 @@ class VWAPBacktestEngine:
         # Prepare trade data
         trades_data = []
         for trade in self.closed_trades:
+            # Extract signal data if available
+            signal_data = None
+            if trade.signal:
+                signal_data = {
+                    'signal_type': trade.signal.signal_type,
+                    'confidence': trade.signal.confidence,
+                    'reason': trade.signal.reason,
+                    'vwap_band': float(trade.signal.vwap_band) if trade.signal.vwap_band else None
+                }
+
+                # Add SR zone data if available
+                if trade.signal.sr_zone:
+                    signal_data['sr_zone'] = {
+                        'level': float(trade.signal.sr_zone.level),
+                        'upper': float(trade.signal.sr_zone.upper),
+                        'lower': float(trade.signal.sr_zone.lower),
+                        'zone_type': trade.signal.sr_zone.zone_type,
+                        'strength': trade.signal.sr_zone.strength
+                    }
+
             trades_data.append({
                 'position_id': trade.position_id,
                 'direction': trade.direction,
@@ -599,7 +619,8 @@ class VWAPBacktestEngine:
                 'pnl_pct': float(trade.pnl_pct) if trade.pnl_pct else None,
                 'stop_loss': float(trade.stop_loss),
                 'take_profit': float(trade.take_profit),
-                'duration_minutes': (trade.exit_time - trade.entry_time) / 1000 / 60 if trade.exit_time else None
+                'duration_minutes': (trade.exit_time - trade.entry_time) / 1000 / 60 if trade.exit_time else None,
+                'signal': signal_data  # Include signal and SR zone data
             })
 
         # Prepare results
