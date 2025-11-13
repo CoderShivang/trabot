@@ -525,4 +525,4 @@ class InteractiveDashboard:
         print(f"[DASHBOARD] Open in browser: http://127.0.0.1:{port}/")
         print(f"[DASHBOARD] Press Ctrl+C to stop the server\n")
 
-        self.app.run_server(debug=debug, port=port, host='127.0.0.1')
+        self.app.run(debug=debug, port=port, host='127.0.0.1')
