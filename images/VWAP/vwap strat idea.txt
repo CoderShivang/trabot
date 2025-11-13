@@ -1,0 +1,8 @@
+Strategy excerpt:
+
+VWAP based trades. The blue line is VWAP and the bands above and below that are uper and lower bands. The white marked zones act as ranges for support/resistance. In the below mentioned strategy -1 refers to lower band +1 refers to upper band.
+Vwap with it’s standard deviations: Form short term bearish/bullish bias Look to enter long near the -1 standard deviation provided that zone has been proven as support. Short entries near top of +1 vwap band if short term market outlook bearish Trend continuation trades: Price firmly bullish( all 3 bands below price) long trades on pullback to +1 vwap band after seeing confirmation of price bounce
+Price firmly bearish, all bands above price, short on pullback to lower band and confirmation of price heading lower In trendy markets (conditions of vwap bands as mentioned above) : also look for pullback irrespective of touch of lower or upper bands. These if confirmed with structure and price starting to trend after pullback, can be good entries Include: support zones test when looking to enter these trades based on vwap bands. Wait for support zones to get formed and tested to increase chances of good trades
+I think we could also include those white s/r zones to get enter longs on support with other vwap confluence and short on support break ofc added with other confluence
+
+code until now also pasted. Complete the code if it is left, refine if you think, the code is straying away from what I described. Remember all orders need to be limit orders due to lower fees
