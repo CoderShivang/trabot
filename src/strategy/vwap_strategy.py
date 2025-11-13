@@ -298,12 +298,12 @@ class VWAPStrategy:
         # Components
         self.vwap_calc = VWAPCalculator()
         self.sr_detector = EnhancedSRDetector(
-            min_consolidation_bars=15,
-            max_consolidation_range_pct=0.02,
+            min_consolidation_bars=10,  # Reduced from 15 to find more zones
+            max_consolidation_range_pct=0.025,  # Increased from 2% to 2.5% for BTC volatility
             min_touches=3,
-            min_strength=40,
-            max_volatility=0.008,
-            max_trend_slope=0.03
+            min_strength=30,  # Lowered from 40 to allow weaker zones
+            max_volatility=0.012,  # Increased from 0.8% to 1.2% to be less strict
+            max_trend_slope=0.05  # Increased from 3% to 5% to allow more trending areas
         )
 
         # Parameters (can be tuned)
@@ -311,11 +311,12 @@ class VWAPStrategy:
         self.stop_points = self.config.get('stop_points', 150)  # SL in dollars
         self.band_proximity = self.config.get('band_proximity', 75)  # How close to band
         self.zone_proximity = self.config.get('zone_proximity', 150)  # How close to S/R
-        self.min_zone_strength = self.config.get('min_zone_strength', 40)  # Min zone quality
+        self.min_zone_strength = self.config.get('min_zone_strength', 30)  # Min zone quality (lowered to match detector)
         self.require_htf_confluence = self.config.get('require_htf_confluence', False)  # Require 5m/15m confirmation
 
         # State
         self.current_zones = []
+        self._analyze_count = 0  # For periodic logging
 
     def analyze(self, df: pd.DataFrame, current_price: float,
                 df_5m: Optional[pd.DataFrame] = None,
@@ -356,8 +357,15 @@ class VWAPStrategy:
         strong_zones = [z for z in zones_near_price.get('1m', [])
                        if z.strength >= self.min_zone_strength and not z.invalidated]
 
+        # Debug logging (only log if zones found)
+        all_1m_zones = self.sr_detector.zones_by_tf.get('1m', [])
+        if len(all_1m_zones) > 0:
+            logger.debug(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price: {len(zones_near_price.get('1m', []))} | Strong: {len(strong_zones)}")
+
         if strong_zones:
-            logger.debug(f"[VWAP-SR] Found {len(strong_zones)} strong 1m zones near ${current_price:,.0f}")
+            logger.info(f"[VWAP-SR] Found {len(strong_zones)} strong 1m zones near ${current_price:,.0f}")
+            for zone in strong_zones[:3]:  # Log first 3
+                logger.info(f"  Zone @ ${zone.level:,.0f} ({zone.zone_type}, str:{zone.strength})")
 
         # Calculate VWAP
         try:
@@ -368,6 +376,11 @@ class VWAPStrategy:
 
         # Determine market bias
         bias = self._determine_bias(current_price, vwap)
+
+        # Debug VWAP info (log every 100 calls)
+        self._analyze_count += 1
+        if self._analyze_count % 100 == 0 or len(strong_zones) > 0:
+            logger.debug(f"[VWAP] Price: ${current_price:,.0f} | VWAP: ${vwap.vwap:,.0f} | -1σ: ${vwap.lower_1std:,.0f} | +1σ: ${vwap.upper_1std:,.0f} | Bias: {bias}")
 
         # Find trade setups
         signals = []
@@ -395,7 +408,7 @@ class VWAPStrategy:
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
 
-                        if confidence >= 65:
+                        if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = max(zone.level - 30, current_price - 50)
 
                             htf_str = " + HTF✓" if has_htf else ""
@@ -428,7 +441,7 @@ class VWAPStrategy:
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
 
-                        if confidence >= 60:
+                        if confidence >= 50:  # Lowered from 60 for initial testing
                             entry = min(vwap.upper_1std, zone.level) - 20
 
                             htf_str = " + HTF✓" if has_htf else ""
@@ -468,7 +481,7 @@ class VWAPStrategy:
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_upper, has_htf)
 
-                        if confidence >= 65:
+                        if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = min(zone.level + 30, current_price + 50)
 
                             htf_str = " + HTF✓" if has_htf else ""
@@ -501,7 +514,7 @@ class VWAPStrategy:
 
                         confidence = self._calculate_confluence(zone, bias, dist_to_lower, has_htf)
 
-                        if confidence >= 60:
+                        if confidence >= 50:  # Lowered from 60 for initial testing
                             entry = max(vwap.lower_1std, zone.level) + 20
 
                             htf_str = " + HTF✓" if has_htf else ""

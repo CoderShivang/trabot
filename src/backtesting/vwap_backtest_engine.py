@@ -293,9 +293,12 @@ class VWAPBacktestEngine:
                 if signals:
                     # Take best signal
                     best_signal = signals[0]
+                    logger.info(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f} | {best_signal.reason}")
 
-                    if best_signal.confidence >= 65:
+                    if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
                         self._place_entry_order(best_signal, timestamp)
+                    else:
+                        logger.info(f"[SIGNAL] Skipped - confidence {best_signal.confidence:.0f} < 50")
 
             # Progress
             if idx % 500 == 0:
