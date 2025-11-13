@@ -245,8 +245,8 @@ class VWAPBacktestEngine:
         logger.info("[MTF] Preparing multi-timeframe data (1m, 5m, 15m)...")
 
         # Resample 1m data to 5m and 15m for HTF S/R zones
-        df_5m = self._resample_ohlcv(df, '5T')  # 5 minutes
-        df_15m = self._resample_ohlcv(df, '15T')  # 15 minutes
+        df_5m = self._resample_ohlcv(df, '5min')  # 5 minutes
+        df_15m = self._resample_ohlcv(df, '15min')  # 15 minutes
 
         logger.info(f"[MTF] 1m: {len(df)} bars | 5m: {len(df_5m)} bars | 15m: {len(df_15m)} bars\n")
 

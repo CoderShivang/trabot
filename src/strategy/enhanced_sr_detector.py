@@ -190,6 +190,7 @@ class EnhancedSRDetector:
         5. Score quality
         """
         if len(df) < self.min_consolidation_bars:
+            logger.info(f"[SR-{timeframe}] Insufficient data: {len(df)} < {self.min_consolidation_bars}")
             return []
 
         recent_df = df.tail(lookback).copy()
@@ -197,19 +198,28 @@ class EnhancedSRDetector:
 
         # Find consolidation periods
         consolidations = self._find_consolidations(recent_df)
+        logger.info(f"[SR-{timeframe}] Found {len(consolidations)} consolidation periods")
 
         # Extract zones from consolidations
         zones = []
+        choppy_filtered = 0
+        weak_filtered = 0
         current_timestamp = int(datetime.now().timestamp() * 1000)
 
         for start, end in consolidations:
             # Filter choppy areas (matching user's red ellipses)
             if self._is_choppy_area(recent_df, start, end):
+                choppy_filtered += 1
                 continue
 
             zone = self._extract_zone(recent_df, start, end, timeframe, current_timestamp)
-            if zone and zone.strength >= self.min_strength:
-                zones.append(zone)
+            if zone:
+                if zone.strength >= self.min_strength:
+                    zones.append(zone)
+                else:
+                    weak_filtered += 1
+
+        logger.info(f"[SR-{timeframe}] Zones: {len(zones)} valid | {choppy_filtered} choppy-filtered | {weak_filtered} weak-filtered")
 
         return zones
 

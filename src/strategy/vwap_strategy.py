@@ -357,13 +357,11 @@ class VWAPStrategy:
         strong_zones = [z for z in zones_near_price.get('1m', [])
                        if z.strength >= self.min_zone_strength and not z.invalidated]
 
-        # Debug logging (only log if zones found)
+        # Debug logging - always log zone stats
         all_1m_zones = self.sr_detector.zones_by_tf.get('1m', [])
-        if len(all_1m_zones) > 0:
-            logger.debug(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price: {len(zones_near_price.get('1m', []))} | Strong: {len(strong_zones)}")
+        logger.info(f"[VWAP-SR] Total 1m zones: {len(all_1m_zones)} | Near price (±${self.zone_proximity}): {len(zones_near_price.get('1m', []))} | Strong (≥{self.min_zone_strength}): {len(strong_zones)}")
 
         if strong_zones:
-            logger.info(f"[VWAP-SR] Found {len(strong_zones)} strong 1m zones near ${current_price:,.0f}")
             for zone in strong_zones[:3]:  # Log first 3
                 logger.info(f"  Zone @ ${zone.level:,.0f} ({zone.zone_type}, str:{zone.strength})")
 
@@ -377,10 +375,12 @@ class VWAPStrategy:
         # Determine market bias
         bias = self._determine_bias(current_price, vwap)
 
-        # Debug VWAP info (log every 100 calls)
+        # Debug VWAP info - always log when zones exist
         self._analyze_count += 1
-        if self._analyze_count % 100 == 0 or len(strong_zones) > 0:
-            logger.debug(f"[VWAP] Price: ${current_price:,.0f} | VWAP: ${vwap.vwap:,.0f} | -1σ: ${vwap.lower_1std:,.0f} | +1σ: ${vwap.upper_1std:,.0f} | Bias: {bias}")
+        if len(strong_zones) > 0:
+            dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
+            dist_to_upper = vwap.distance_to_band(current_price, 'upper_1std')
+            logger.info(f"[VWAP] Price: ${current_price:,.0f} | VWAP: ${vwap.vwap:,.0f} | -1σ: ${vwap.lower_1std:,.0f} (dist:{dist_to_lower:.0f}) | +1σ: ${vwap.upper_1std:,.0f} (dist:{dist_to_upper:.0f}) | Bias: {bias}")
 
         # Find trade setups
         signals = []
@@ -392,6 +392,10 @@ class VWAPStrategy:
             dist_to_lower = vwap.distance_to_band(current_price, 'lower_1std')
 
             if dist_to_lower <= self.band_proximity:
+                support_zones = [z for z in strong_zones if z.zone_type in ['support', 'both']]
+                if len(support_zones) > 0:
+                    logger.info(f"[CHECK-LONG-MR] Found {len(support_zones)} support zones, checking proximity...")
+
                 for zone in strong_zones:
                     if zone.zone_type in ['support', 'both'] and zone.is_near(current_price, self.zone_proximity):
                         # Check HTF confluence
