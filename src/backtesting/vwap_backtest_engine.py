@@ -167,6 +167,10 @@ class VWAPBacktestEngine:
         logger.info(f"Maker Fee: {self.maker_fee*100:.3f}%")
         logger.info(f"{'='*80}\n")
 
+        # Connect to Binance client
+        logger.info("[INIT] Connecting to Binance...")
+        await self.binance_client.connect()
+
         # Fetch historical data from Binance mainnet
         logger.info("[DATA] Fetching historical data from Binance MAINNET...")
         klines = await self._fetch_historical_data(start_date, end_date)
