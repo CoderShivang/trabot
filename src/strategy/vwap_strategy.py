@@ -88,29 +88,51 @@ class VWAPCalculator:
 
     def calculate(self, df: pd.DataFrame) -> VWAPBands:
         """
-        Calculate VWAP bands for current session
-        Uses intraday data (resets daily)
+        Calculate VWAP bands for current session (matching TradingView's method)
+
+        TradingView VWAP uses:
+        - Source: hlc3 (typical price)
+        - Session reset: Daily (timeframe.change("D"))
+        - Stdev: Calculated from RUNNING vwap, not final vwap
+
+        This implementation matches TradingView's ta.vwap() function.
         """
-        if len(df) < 10:
+        if len(df) < 1:
             raise ValueError("Insufficient data for VWAP calculation")
 
-        # Use session data (today's bars)
-        df = df.copy()
+        # Filter to TODAY'S session only (session reset like TradingView)
+        # Get current date (last bar's date)
+        current_date = pd.to_datetime(df.iloc[-1]['timestamp']).date()
 
-        # Calculate typical price
+        # Filter to bars from today only
+        df = df.copy()
+        df['date'] = pd.to_datetime(df['timestamp']).dt.date
+        session_df = df[df['date'] == current_date].copy()
+
+        if len(session_df) < 2:
+            # If not enough session data, use last 50 bars as fallback
+            session_df = df.tail(50).copy()
+
+        df = session_df
+
+        # Calculate typical price (hlc3 in TradingView)
         typical_price = (df['high'] + df['low'] + df['close']) / 3
 
         # VWAP = cumulative(price * volume) / cumulative(volume)
         cumulative_pv = (typical_price * df['volume']).cumsum()
         cumulative_volume = df['volume'].cumsum()
 
-        # Use last value as current VWAP
-        vwap = float(cumulative_pv.iloc[-1] / cumulative_volume.iloc[-1])
+        # Running VWAP at each bar (matches TradingView's progressive calculation)
+        running_vwap = cumulative_pv / cumulative_volume
 
-        # Calculate standard deviation
-        squared_diff = (typical_price - vwap) ** 2
-        variance = (squared_diff * df['volume']).sum() / df['volume'].sum()
-        std = float(np.sqrt(variance))
+        # Current VWAP (last value)
+        vwap = float(running_vwap.iloc[-1])
+
+        # Calculate standard deviation using RUNNING vwap (TradingView method)
+        # At each bar, deviation is from the VWAP value at that bar, not final VWAP
+        squared_diff = (typical_price - running_vwap) ** 2
+        cumulative_variance = (squared_diff * df['volume']).cumsum() / cumulative_volume
+        std = float(np.sqrt(cumulative_variance.iloc[-1]))
 
         return VWAPBands(
             vwap=vwap,
