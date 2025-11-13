@@ -47,8 +47,11 @@ def parse_args():
     parser.add_argument('--end', type=str, default=None,
                         help='End date (YYYY-MM-DD)')
 
-    parser.add_argument('--capital', type=float, default=10000,
-                        help='Initial capital in USDT (default: 10000)')
+    parser.add_argument('--capital', type=float, default=100,
+                        help='Initial margin in USDT (default: 100)')
+
+    parser.add_argument('--leverage', type=int, default=20,
+                        help='Leverage multiplier (default: 20)')
 
     parser.add_argument('--risk', type=float, default=0.02,
                         help='Risk per trade as decimal (default: 0.02 = 2%%)')
@@ -89,6 +92,7 @@ async def main():
         'symbol': args.symbol,
         'timeframe': args.timeframe,
         'initial_capital': args.capital,
+        'leverage': args.leverage,
         'risk_per_trade': args.risk,
         'strategy_params': {
             'target_points': args.target,

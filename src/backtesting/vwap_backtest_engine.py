@@ -112,11 +112,12 @@ class VWAPBacktestEngine:
         self.config = config
         self.symbol = config.get('symbol', 'BTCUSDT')
         self.timeframe = config.get('timeframe', '1m')
-        self.initial_capital = config.get('initial_capital', 10000)
+        self.initial_capital = config.get('initial_capital', 100)
         self.risk_per_trade = config.get('risk_per_trade', 0.02)  # 2% per trade
+        self.leverage = config.get('leverage', 20)  # 20x leverage for futures
 
-        # Fees (limit orders = maker fee)
-        self.maker_fee = 0.0002  # 0.02% Binance maker fee
+        # Fees (limit orders = maker fee, based on notional value)
+        self.maker_fee = 0.0002  # 0.02% Binance maker fee on notional value
 
         # Components - Create minimal config for BinanceClient
         binance_config = self._create_binance_config()
@@ -163,9 +164,11 @@ class VWAPBacktestEngine:
         logger.info(f"{'='*80}")
         logger.info(f"Period: {start_date.date()} to {end_date.date()}")
         logger.info(f"Timeframe: {self.timeframe}")
-        logger.info(f"Initial Capital: ${self.initial_capital:,.2f}")
+        logger.info(f"Initial Margin: ${self.initial_capital:,.2f}")
+        logger.info(f"Leverage: {self.leverage}x")
+        logger.info(f"Max Position Size: ${self.initial_capital * self.leverage:,.2f}")
         logger.info(f"Risk per Trade: {self.risk_per_trade*100:.1f}%")
-        logger.info(f"Maker Fee: {self.maker_fee*100:.3f}%")
+        logger.info(f"Maker Fee: {self.maker_fee*100:.3f}% (of notional)")
         logger.info(f"{'='*80}\n")
 
         # Connect to Binance client
@@ -388,8 +391,9 @@ class VWAPBacktestEngine:
             self.positions.remove(pos)
 
     def _place_entry_order(self, signal: TradeSignal, timestamp: int):
-        """Place limit entry order"""
-        # Calculate position size based on risk
+        """Place limit entry order with leverage"""
+        # Calculate position size based on risk with leverage
+        # Available margin for this trade (risk amount)
         risk_amount = self.current_capital * self.risk_per_trade
         stop_distance = abs(signal.entry_price - signal.stop_loss)
 
@@ -397,7 +401,18 @@ class VWAPBacktestEngine:
             logger.warning("[RISK] Stop distance is zero, skipping trade")
             return
 
+        # Calculate quantity: risk_amount / stop_distance
+        # With leverage, we can control (quantity * price) notional value
         quantity = risk_amount / stop_distance
+
+        # Check if notional value exceeds leverage limit
+        notional_value = quantity * signal.entry_price
+        max_notional = self.current_capital * self.leverage
+
+        if notional_value > max_notional:
+            # Cap the position size to max leverage
+            quantity = max_notional / signal.entry_price
+            logger.warning(f"[RISK] Position size capped by leverage limit (${max_notional:,.2f})")
 
         # Create limit order
         order_id = f"ENTRY_{timestamp}_{signal.direction}"
@@ -583,6 +598,8 @@ class VWAPBacktestEngine:
                 'symbol': self.symbol,
                 'timeframe': self.timeframe,
                 'initial_capital': self.initial_capital,
+                'leverage': self.leverage,
+                'max_position_size': self.initial_capital * self.leverage,
                 'final_capital': float(self.current_capital),
                 'risk_per_trade': self.risk_per_trade,
                 'maker_fee': self.maker_fee
@@ -682,7 +699,7 @@ class VWAPBacktestEngine:
                 signal_reason = trade.signal.reason if trade.signal else "N/A"
                 confidence = trade.signal.confidence if trade.signal else 0
                 vwap_band = f"${trade.signal.vwap_band:,.2f}" if trade.signal else "N/A"
-                sr_zone_center = f"${trade.signal.sr_zone.center:,.2f}" if (trade.signal and trade.signal.sr_zone) else "N/A"
+                sr_zone_center = f"${trade.signal.sr_zone.level:,.2f}" if (trade.signal and trade.signal.sr_zone) else "N/A"
                 sr_zone_type = trade.signal.sr_zone.zone_type if (trade.signal and trade.signal.sr_zone) else "N/A"
                 sr_zone_strength = trade.signal.sr_zone.strength if (trade.signal and trade.signal.sr_zone) else "N/A"
 
