@@ -28,8 +28,8 @@ if not results_dir.exists():
     print("  python run_vwap_backtest.py")
     sys.exit(1)
 
-# Find most recent results file
-results_files = list(results_dir.glob('backtest_*.json'))
+# Find most recent results file (support both old and new naming patterns)
+results_files = list(results_dir.glob('backtest_*.json')) + list(results_dir.glob('vwap_backtest_*.json'))
 if not results_files:
     print("[ERROR] No backtest results found in data/vwap_backtest/")
     print("Run a backtest first: python run_vwap_backtest.py")
