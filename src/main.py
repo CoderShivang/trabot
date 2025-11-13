@@ -1,7 +1,7 @@
 # Minimal main placeholder
 import asyncio
 from core.bot import ScalperBot
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 from config import Config
 from dotenv import load_dotenv
 load_dotenv()

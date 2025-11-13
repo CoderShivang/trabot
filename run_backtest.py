@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent / 'src'))
 
 from backtesting.backtest_engine import BacktestEngine
 from config import load_config
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

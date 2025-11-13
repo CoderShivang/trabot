@@ -17,7 +17,7 @@ from strategy.confirmation import ConfirmationAnalyzer
 from strategy.big_orders import BigOrdersDetector
 from core.position_manager import PositionManager
 from learning.feedback_system import AdaptiveFeedbackSystem
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
