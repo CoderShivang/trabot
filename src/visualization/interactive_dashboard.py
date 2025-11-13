@@ -10,6 +10,7 @@ Creates interactive web app with:
 
 import dash
 from dash import dcc, html, Input, Output, State, dash_table
+from dash.dash_table.Format import Format, Scheme
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas as pd
@@ -101,13 +102,13 @@ class InteractiveDashboard:
 
             formatted_data.append({
                 'date_str': day['date'].strftime('%Y-%m-%d'),
-                'pnl_str': f"${day['pnl']:,.2f}",
-                'pnl': day['pnl'],  # Hidden field for conditional formatting and sorting
-                'fees_str': f"${day['total_fees']:,.2f}",
+                'date_obj': str(day['date']),  # For filtering
+                'pnl': day['pnl'],  # Numeric for sorting
+                'total_fees': day['total_fees'],  # Numeric for sorting
                 'trades': day['trades'],
                 'wins': day['wins'],
                 'losses': day['losses'],
-                'win_rate_str': f"{win_rate:.1f}%"
+                'win_rate': win_rate
             })
 
         return formatted_data
@@ -139,18 +140,21 @@ class InteractiveDashboard:
             # Daily P&L Analysis Section
             html.Div([
                 html.H3("Daily P&L Analysis", style={'color': '#34495e'}),
-                html.P("View your best and worst trading days. Click column headers to sort.",
+                html.P("Click column headers to sort. Click a row to filter trades to that day.",
                        style={'color': '#7f8c8d', 'fontSize': '14px'}),
                 dash_table.DataTable(
                     id='daily-pnl-table',
                     columns=[
                         {'name': 'Date', 'id': 'date_str'},
-                        {'name': 'Total P&L', 'id': 'pnl_str', 'type': 'numeric'},
-                        {'name': 'Total Fees', 'id': 'fees_str'},
-                        {'name': 'Trades', 'id': 'trades'},
-                        {'name': 'Wins', 'id': 'wins'},
-                        {'name': 'Losses', 'id': 'losses'},
-                        {'name': 'Win Rate', 'id': 'win_rate_str'},
+                        {'name': 'Total P&L', 'id': 'pnl', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Total Fees', 'id': 'total_fees', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Trades', 'id': 'trades', 'type': 'numeric'},
+                        {'name': 'Wins', 'id': 'wins', 'type': 'numeric'},
+                        {'name': 'Losses', 'id': 'losses', 'type': 'numeric'},
+                        {'name': 'Win Rate', 'id': 'win_rate', 'type': 'numeric',
+                         'format': Format(precision=1, scheme=Scheme.fixed).symbol_suffix('%')},
                     ],
                     data=self._format_daily_pnl_table(),
                     style_data_conditional=[
@@ -164,6 +168,12 @@ class InteractiveDashboard:
                             'if': {'filter_query': '{pnl} < 0'},
                             'backgroundColor': '#f8d7da',
                             'color': '#721c24',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'state': 'selected'},
+                            'backgroundColor': '#3498db',
+                            'color': 'white',
                             'fontWeight': 'bold'
                         }
                     ],
@@ -187,9 +197,16 @@ class InteractiveDashboard:
                     ],
                     sort_action='native',  # Enable built-in sorting
                     sort_mode='single',
+                    row_selectable='single',  # Allow selecting rows
+                    selected_rows=[],
                     page_size=15
                 )
             ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Selected date info
+            html.Div(id='selected-date-info', style={'margin': '10px 0', 'fontWeight': 'bold', 'color': '#2c3e50'}),
 
             html.Hr(),
 
@@ -304,14 +321,29 @@ class InteractiveDashboard:
 
         @self.app.callback(
             [Output('trade-table', 'data'),
-             Output('trade-count', 'children')],
+             Output('trade-count', 'children'),
+             Output('selected-date-info', 'children')],
             [Input('outcome-filter', 'value'),
              Input('direction-filter', 'value'),
-             Input('signal-filter', 'value')]
+             Input('signal-filter', 'value'),
+             Input('daily-pnl-table', 'selected_rows'),
+             Input('daily-pnl-table', 'data')]
         )
-        def update_trade_table(outcome, direction, signal_type):
-            """Filter trade list based on selections"""
-            filtered = self._filter_trades(outcome, direction, signal_type)
+        def update_trade_table(outcome, direction, signal_type, selected_rows, daily_data):
+            """Filter trade list based on selections and selected date"""
+            # Check if a date is selected
+            selected_date = None
+            date_info = ""
+            if selected_rows and len(selected_rows) > 0 and daily_data:
+                selected_row = daily_data[selected_rows[0]]
+                selected_date = selected_row['date_obj']
+                date_info = html.Div([
+                    html.Span("📅 Filtering trades for: ", style={'color': '#2c3e50'}),
+                    html.Span(selected_row['date_str'], style={'color': '#3498db', 'fontWeight': 'bold', 'fontSize': '16px'}),
+                    html.Span(f" ({selected_row['trades']} trades)", style={'color': '#7f8c8d'})
+                ])
+
+            filtered = self._filter_trades(outcome, direction, signal_type, selected_date)
 
             # Format trades for table
             table_data = []
@@ -345,7 +377,7 @@ class InteractiveDashboard:
                 })
 
             count_text = f"Showing {len(filtered)} trades"
-            return table_data, count_text
+            return table_data, count_text, date_info
 
         @self.app.callback(
             [Output('trade-chart', 'figure'),
@@ -398,9 +430,13 @@ class InteractiveDashboard:
 
             return fig, info_panel
 
-    def _filter_trades(self, outcome: str, direction: str, signal_type: str) -> List[Dict]:
+    def _filter_trades(self, outcome: str, direction: str, signal_type: str, selected_date: str = None) -> List[Dict]:
         """Filter trades based on criteria"""
         filtered = self.trades.copy()
+
+        # Filter by date if one is selected
+        if selected_date:
+            filtered = [t for t in filtered if str(pd.to_datetime(t['entry_time'], unit='ms').date()) == selected_date]
 
         if outcome != 'all':
             filtered = [t for t in filtered if (t['pnl'] > 0) == (outcome == 'win')]
@@ -418,7 +454,7 @@ class InteractiveDashboard:
         Create chart showing only context for this specific trade
 
         Shows:
-        - Candlesticks for ±30 minutes around trade
+        - Candlesticks for ±1 hour around trade
         - VWAP bands at trade time
         - Only S/R zones that contributed to this trade's decision
         - Entry/exit markers for this trade only
@@ -426,9 +462,9 @@ class InteractiveDashboard:
         entry_time = pd.to_datetime(trade['entry_time'], unit='ms')
         exit_time = pd.to_datetime(trade['exit_time'], unit='ms')
 
-        # Get time window: 30 min before entry to 30 min after exit
-        start_time = entry_time - timedelta(minutes=30)
-        end_time = exit_time + timedelta(minutes=30)
+        # Get time window: 1 hour before entry to 1 hour after exit
+        start_time = entry_time - timedelta(hours=1)
+        end_time = exit_time + timedelta(hours=1)
 
         # Filter data to window
         mask = (self.df['timestamp'] >= start_time) & (self.df['timestamp'] <= end_time)
@@ -436,8 +472,8 @@ class InteractiveDashboard:
 
         if len(window_df) == 0:
             # Fallback to wider window
-            mask = (self.df['timestamp'] >= entry_time - timedelta(hours=1)) & \
-                   (self.df['timestamp'] <= exit_time + timedelta(hours=1))
+            mask = (self.df['timestamp'] >= entry_time - timedelta(hours=2)) & \
+                   (self.df['timestamp'] <= exit_time + timedelta(hours=2))
             window_df = self.df[mask].copy()
 
         # Create figure with subplots
