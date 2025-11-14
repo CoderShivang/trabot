@@ -771,7 +771,8 @@ class VWAPBacktestEngine:
         self.stats.winning_trades = len(wins)
         self.stats.losing_trades = len(losses)
         self.stats.total_pnl = sum(t.pnl for t in self.closed_trades)
-        self.stats.net_pnl = self.stats.total_pnl
+        # Net P&L should be actual capital change, not sum of trades
+        self.stats.net_pnl = self.current_capital - self.initial_capital
 
         if self.stats.total_trades > 0:
             self.stats.win_rate = (self.stats.winning_trades / self.stats.total_trades) * 100
