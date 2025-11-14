@@ -1084,11 +1084,11 @@ class VWAPBacktestEngine:
             if len(reason) > 70:
                 reason = reason[:67] + "..."
 
-            # Determine if win or loss
-            profit_indicator = "✓" if trade.pnl > 0 else "✗"
+            # Determine if win or loss (use ASCII for Windows compatibility)
+            profit_indicator = "WIN" if trade.pnl > 0 else "LOSS"
 
             logger.info(f"Trade #{i:3d} | {trade.direction:5s} | Entry: ${trade.entry_price:9,.2f} | Exit: ${trade.exit_price:9,.2f} | "
-                       f"P&L: ${trade.pnl:7,.2f} ({trade.pnl_pct:+6.2f}%) {profit_indicator} | {trade.exit_reason:2s}")
+                       f"P&L: ${trade.pnl:7,.2f} ({trade.pnl_pct:+6.2f}%) {profit_indicator:4s} | {trade.exit_reason:2s}")
             logger.info(f"          Reason: {reason}")
             logger.info("")
 

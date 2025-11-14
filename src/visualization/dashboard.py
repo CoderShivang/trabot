@@ -269,11 +269,15 @@ class VWAPDashboard:
                 'confidence': trade['signal']['confidence']
             }
 
+            # Handle None P&L values
+            pnl = trade['pnl'] if trade['pnl'] is not None else 0
+            pnl_pct = trade['pnl_pct'] if trade['pnl_pct'] is not None else 0
+
             exit_data = {
                 'x': exit_time,
                 'y': trade['exit_price'],
-                'text': f"{trade['exit_reason']}<br>P&L: ${trade['pnl']:.2f} ({trade['pnl_pct']:.2f}%)",
-                'pnl': trade['pnl']
+                'text': f"{trade['exit_reason']}<br>P&L: ${pnl:.2f} ({pnl_pct:.2f}%)",
+                'pnl': pnl
             }
 
             if trade['direction'] == 'LONG':
@@ -281,7 +285,7 @@ class VWAPDashboard:
             else:
                 entry_shorts.append(entry_data)
 
-            if trade['pnl'] > 0:
+            if pnl > 0:
                 exit_wins.append(exit_data)
             else:
                 exit_losses.append(exit_data)
