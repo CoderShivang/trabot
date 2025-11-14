@@ -327,10 +327,13 @@ class VWAPBacktestEngine:
             # === 2. Check open positions for TP/SL fills ===
             self._check_position_fills(timestamp, high, low)
 
-            # === 3. Update position tracking and trailing TP ===
+            # === 3. Update position tracking, breakeven stops, and trailing TP ===
             for pos in self.positions:
                 pos.highest_price = max(pos.highest_price, high)
                 pos.lowest_price = min(pos.lowest_price, low)
+
+                # Move stop to breakeven for ALL trades (once 50% to target)
+                self._update_breakeven_stop(pos, close)
 
                 # Implement trailing TP for trend trades
                 if pos.use_trailing_tp and pos.tp_order:
@@ -588,6 +591,50 @@ class VWAPBacktestEngine:
         self.stats.total_fees += entry_fee
 
         tqdm.write(f"[ENTRY] {entry_order.direction} @ ${entry_order.filled_price:,.0f}")
+
+    def _update_breakeven_stop(self, position: BacktestPosition, current_price: float):
+        """
+        Move stop loss to breakeven once trade moves significantly in our favor
+
+        Logic:
+        - Move SL to breakeven (entry price) once price moves 50% toward target
+        - Protects against turning winners into losers (img 090902 issue)
+        - Only moves SL once, doesn't trail multiple times
+        """
+        if not position.sl_order:
+            return
+
+        # Check if we've already moved to breakeven
+        # For LONG: breakeven means SL >= entry, for SHORT: SL <= entry
+        if position.direction == 'LONG':
+            if position.stop_loss >= position.entry_price:
+                return  # Already at or above breakeven
+
+            # Calculate how far we've moved toward target
+            unrealized_pnl = current_price - position.entry_price
+            target_distance = position.take_profit - position.entry_price
+
+            # Move to breakeven once 50% to target
+            if unrealized_pnl >= target_distance * 0.5:
+                old_sl = position.stop_loss
+                position.stop_loss = position.entry_price
+                position.sl_order.limit_price = position.entry_price
+                tqdm.write(f"[BREAKEVEN] LONG SL moved ${old_sl:,.0f} -> ${position.entry_price:,.0f} (breakeven)")
+
+        else:  # SHORT
+            if position.stop_loss <= position.entry_price:
+                return  # Already at or below breakeven
+
+            # Calculate how far we've moved toward target
+            unrealized_pnl = position.entry_price - current_price
+            target_distance = position.entry_price - position.take_profit
+
+            # Move to breakeven once 50% to target
+            if unrealized_pnl >= target_distance * 0.5:
+                old_sl = position.stop_loss
+                position.stop_loss = position.entry_price
+                position.sl_order.limit_price = position.entry_price
+                tqdm.write(f"[BREAKEVEN] SHORT SL moved ${old_sl:,.0f} -> ${position.entry_price:,.0f} (breakeven)")
 
     def _update_trailing_tp(self, position: BacktestPosition, current_price: float):
         """

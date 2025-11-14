@@ -413,6 +413,213 @@ class VWAPStrategy:
         else:
             return 'ranging'
 
+    def _detect_vwap_rejections(self, df: pd.DataFrame, vwap: float, lookback: int = 15) -> Dict[str, int]:
+        """
+        Detect if VWAP is acting as dynamic support or resistance
+
+        Returns: {'resistance_rejections': int, 'support_bounces': int}
+        """
+        recent = df.tail(lookback)
+
+        if len(recent) < 5:
+            return {'resistance_rejections': 0, 'support_bounces': 0}
+
+        resistance_rejections = 0
+        support_bounces = 0
+
+        for _, candle in recent.iterrows():
+            # Check if VWAP is acting as resistance (price rejected from above)
+            if candle['close'] < vwap < candle['high']:
+                # Candle went up to VWAP but closed below - rejection
+                if candle['close'] < candle['open']:  # Bearish candle
+                    resistance_rejections += 1
+
+            # Check if VWAP is acting as support (price bounced from below)
+            elif candle['close'] > vwap > candle['low']:
+                # Candle went down to VWAP but closed above - bounce
+                if candle['close'] > candle['open']:  # Bullish candle
+                    support_bounces += 1
+
+        return {
+            'resistance_rejections': resistance_rejections,
+            'support_bounces': support_bounces
+        }
+
+    def _detect_price_structure(self, df: pd.DataFrame, lookback: int = 20) -> str:
+        """
+        Detect market structure based on swing highs and lows
+
+        Returns: 'bullish' (HH, HL), 'bearish' (LH, LL), or 'neutral'
+        """
+        recent = df.tail(lookback)
+
+        if len(recent) < 10:
+            return 'neutral'
+
+        # Find swing highs and lows (local peaks and troughs)
+        highs = recent['high'].values
+        lows = recent['low'].values
+
+        swing_highs = []
+        swing_lows = []
+
+        # Simple swing detection: point higher/lower than neighbors
+        for i in range(2, len(highs) - 2):
+            # Swing high: higher than 2 bars on each side
+            if highs[i] > highs[i-1] and highs[i] > highs[i-2] and \
+               highs[i] > highs[i+1] and highs[i] > highs[i+2]:
+                swing_highs.append((i, highs[i]))
+
+            # Swing low: lower than 2 bars on each side
+            if lows[i] < lows[i-1] and lows[i] < lows[i-2] and \
+               lows[i] < lows[i+1] and lows[i] < lows[i+2]:
+                swing_lows.append((i, lows[i]))
+
+        # Need at least 2 swings to determine structure
+        if len(swing_highs) < 2 or len(swing_lows) < 2:
+            return 'neutral'
+
+        # Check for Higher Highs and Higher Lows (bullish)
+        recent_highs = swing_highs[-2:]
+        recent_lows = swing_lows[-2:]
+
+        hh = recent_highs[1][1] > recent_highs[0][1]  # Higher high
+        hl = recent_lows[1][1] > recent_lows[0][1]     # Higher low
+
+        lh = recent_highs[1][1] < recent_highs[0][1]  # Lower high
+        ll = recent_lows[1][1] < recent_lows[0][1]     # Lower low
+
+        if hh and hl:
+            return 'bullish'
+        elif lh and ll:
+            return 'bearish'
+        else:
+            return 'neutral'
+
+    def _detect_rapid_momentum(self, df: pd.DataFrame, lookback: int = 5) -> Dict[str, any]:
+        """
+        Detect rapid price movements that need confirmation before entry
+
+        Returns: {'is_rapid': bool, 'direction': str, 'strength': float}
+        """
+        recent = df.tail(lookback)
+
+        if len(recent) < 3:
+            return {'is_rapid': False, 'direction': 'neutral', 'strength': 0}
+
+        # Calculate average candle body size
+        bodies = abs(recent['close'] - recent['open'])
+        avg_body = bodies.mean()
+
+        # Calculate price change
+        price_change = recent.iloc[-1]['close'] - recent.iloc[0]['open']
+        price_change_pct = abs(price_change) / recent.iloc[0]['open']
+
+        # Check for large candles (bodies > 1.5x average)
+        large_candles = (bodies > avg_body * 1.5).sum()
+
+        # Rapid if: large price change (>0.5%) AND multiple large candles
+        is_rapid = price_change_pct > 0.005 and large_candles >= 2
+
+        if is_rapid:
+            direction = 'bullish' if price_change > 0 else 'bearish'
+            strength = price_change_pct * 100  # As percentage
+        else:
+            direction = 'neutral'
+            strength = 0
+
+        return {
+            'is_rapid': is_rapid,
+            'direction': direction,
+            'strength': strength
+        }
+
+    def _check_overhead_resistance(self, df: pd.DataFrame, current_price: float, lookback: int = 30) -> Optional[float]:
+        """
+        Check for local resistance overhead (price repeatedly rejected from a level)
+
+        Returns: resistance level if found, None otherwise
+        """
+        recent = df.tail(lookback)
+
+        if len(recent) < 10:
+            return None
+
+        # Look for price levels where highs cluster (resistance)
+        highs = recent['high'].values
+
+        # Group highs within 0.2% of each other
+        resistance_clusters = {}
+        tolerance = current_price * 0.002  # 0.2% tolerance
+
+        for high in highs:
+            # Only consider levels above current price
+            if high <= current_price:
+                continue
+
+            # Find existing cluster or create new one
+            found_cluster = False
+            for level in list(resistance_clusters.keys()):
+                if abs(high - level) <= tolerance:
+                    resistance_clusters[level] += 1
+                    found_cluster = True
+                    break
+
+            if not found_cluster:
+                resistance_clusters[high] = 1
+
+        # Find strongest resistance (most touches)
+        if resistance_clusters:
+            strongest_resistance = max(resistance_clusters.items(), key=lambda x: x[1])
+            # Require at least 2 touches to be considered resistance
+            if strongest_resistance[1] >= 2:
+                return strongest_resistance[0]
+
+        return None
+
+    def _check_support_below(self, df: pd.DataFrame, current_price: float, lookback: int = 30) -> Optional[float]:
+        """
+        Check for local support below (price repeatedly bounced from a level)
+
+        Returns: support level if found, None otherwise
+        """
+        recent = df.tail(lookback)
+
+        if len(recent) < 10:
+            return None
+
+        # Look for price levels where lows cluster (support)
+        lows = recent['low'].values
+
+        # Group lows within 0.2% of each other
+        support_clusters = {}
+        tolerance = current_price * 0.002  # 0.2% tolerance
+
+        for low in lows:
+            # Only consider levels below current price
+            if low >= current_price:
+                continue
+
+            # Find existing cluster or create new one
+            found_cluster = False
+            for level in list(support_clusters.keys()):
+                if abs(low - level) <= tolerance:
+                    support_clusters[level] += 1
+                    found_cluster = True
+                    break
+
+            if not found_cluster:
+                support_clusters[low] = 1
+
+        # Find strongest support (most touches)
+        if support_clusters:
+            strongest_support = max(support_clusters.items(), key=lambda x: x[1])
+            # Require at least 2 touches to be considered support
+            if strongest_support[1] >= 2:
+                return strongest_support[0]
+
+        return None
+
     def analyze(self, df: pd.DataFrame, current_price: float,
                 df_5m: Optional[pd.DataFrame] = None,
                 df_15m: Optional[pd.DataFrame] = None,
@@ -490,6 +697,30 @@ class VWAPStrategy:
             logger.error(f"[VWAP] Error calculating VWAP: {e}")
             return []
 
+        # Detect market patterns for trade filtering
+        vwap_rejections = self._detect_vwap_rejections(df, vwap.vwap, lookback=15)
+        price_structure = self._detect_price_structure(df, lookback=20)
+        momentum = self._detect_rapid_momentum(df, lookback=5)
+        overhead_resistance = self._check_overhead_resistance(df, current_price, lookback=30)
+        support_below = self._check_support_below(df, current_price, lookback=30)
+
+        # Log pattern detection
+        if vwap_rejections['resistance_rejections'] >= 3:
+            logger.info(f"[VWAP-PATTERN] VWAP acting as RESISTANCE ({vwap_rejections['resistance_rejections']} rejections)")
+        if vwap_rejections['support_bounces'] >= 3:
+            logger.info(f"[VWAP-PATTERN] VWAP acting as SUPPORT ({vwap_rejections['support_bounces']} bounces)")
+
+        if price_structure != 'neutral':
+            logger.info(f"[PRICE-STRUCTURE] Market structure is {price_structure.upper()}")
+
+        if momentum['is_rapid']:
+            logger.info(f"[MOMENTUM] Rapid {momentum['direction']} move detected (strength: {momentum['strength']:.2f}%)")
+
+        if overhead_resistance:
+            logger.info(f"[LOCAL-SR] Overhead resistance detected at ${overhead_resistance:,.0f}")
+        if support_below:
+            logger.info(f"[LOCAL-SR] Support below detected at ${support_below:,.0f}")
+
         # Determine market bias
         bias = self._determine_bias(current_price, vwap)
 
@@ -562,6 +793,24 @@ class VWAPStrategy:
                         # Reduce confidence for zones that broke recently
                         if zone.last_interaction == 'breakout' and zone.breakouts >= 2:
                             confidence -= 20  # Penalize broken zones
+
+                        # === ADDITIONAL FILTERS TO AVOID BAD TRADES ===
+
+                        # Filter 1: VWAP acting as dynamic resistance overhead (img 090134)
+                        if current_price < vwap.vwap and vwap_rejections['resistance_rejections'] >= 3:
+                            logger.debug(f"[FILTER] Skipping LONG - VWAP acting as strong resistance ({vwap_rejections['resistance_rejections']} rejections)")
+                            continue
+
+                        # Filter 2: Rapid bearish momentum without confirmation (img 090215)
+                        if momentum['is_rapid'] and momentum['direction'] == 'bearish':
+                            logger.debug(f"[FILTER] Skipping LONG - rapid bearish move detected (need confirmation)")
+                            continue
+
+                        # Filter 3: Overhead resistance detected - need breakout first (img 090754)
+                        if overhead_resistance and abs(overhead_resistance - current_price) / current_price < 0.003:
+                            # Resistance is within 0.3% - too close, need breakout confirmation
+                            logger.debug(f"[FILTER] Skipping LONG - local resistance overhead at ${overhead_resistance:,.0f} (need breakout)")
+                            continue
 
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = max(zone.level - 30, current_price - 50)
@@ -662,6 +911,29 @@ class VWAPStrategy:
                         # Reduce confidence for zones that broke recently
                         if zone.last_interaction == 'breakout' and zone.breakouts >= 2:
                             confidence -= 20  # Penalize broken zones
+
+                        # === ADDITIONAL FILTERS TO AVOID BAD TRADES ===
+
+                        # Filter 1: VWAP acting as dynamic support below
+                        if current_price > vwap.vwap and vwap_rejections['support_bounces'] >= 3:
+                            logger.debug(f"[FILTER] Skipping SHORT - VWAP acting as strong support ({vwap_rejections['support_bounces']} bounces)")
+                            continue
+
+                        # Filter 2: Rapid bullish momentum without confirmation
+                        if momentum['is_rapid'] and momentum['direction'] == 'bullish':
+                            logger.debug(f"[FILTER] Skipping SHORT - rapid bullish move detected (need confirmation)")
+                            continue
+
+                        # Filter 3: Bullish price structure (HH, HL) - don't counter-trend without confirmation (img 090135)
+                        if price_structure == 'bullish':
+                            logger.debug(f"[FILTER] Skipping SHORT - bullish price structure (HH, HL) - need reversal confirmation")
+                            continue
+
+                        # Filter 4: Support below detected - need breakdown first
+                        if support_below and abs(current_price - support_below) / current_price < 0.003:
+                            # Support is within 0.3% - too close, need breakdown confirmation
+                            logger.debug(f"[FILTER] Skipping SHORT - local support below at ${support_below:,.0f} (need breakdown)")
+                            continue
 
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = min(zone.level + 30, current_price + 50)
