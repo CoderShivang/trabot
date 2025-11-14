@@ -1,0 +1,19 @@
+# Dashboard Requirements for VWAP + S/R Strategy
+# Install with: pip install -r requirements_dashboard.txt
+
+# Dash framework
+dash==2.14.2
+dash-bootstrap-components==1.5.0
+
+# Data processing
+pandas==2.1.4
+numpy==1.26.2
+
+# Plotting
+plotly==5.18.0
+
+# Binance API (for fetching candle data)
+python-binance==1.0.19
+
+# ML requirements (if using ML features)
+scikit-learn==1.3.2
