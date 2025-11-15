@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(break)",
+      "Bash(fi)",
+      "Bash(done)",
+      "Bash(tee:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
