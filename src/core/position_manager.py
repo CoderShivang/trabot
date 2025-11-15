@@ -11,7 +11,7 @@ from statistics import mean
 from pathlib import Path
 import asyncio
 
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

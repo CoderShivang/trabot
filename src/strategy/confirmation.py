@@ -7,11 +7,11 @@ Confirmation Analyzer - Extended order-flow signals:
  - tape reading (aggressive vs passive fills)
 """
 
-from data.orderbook import OrderBookDepth
+from src.data.orderbook import OrderBookDepth
 from typing import Dict, List
 import time
 import numpy as np
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

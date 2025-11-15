@@ -13,15 +13,15 @@ from pathlib import Path
 import pandas as pd
 import numpy as np
 
-from data.binance_client import BinanceClient
-from data.orderbook import OrderBookDepth, PriceLevel
-from strategy.clc_engine import CLCEngine, CLCScore
-from strategy.context_analyzer import ContextAnalyzer
-from strategy.location_detector import LocationDetector
-from strategy.confirmation import ConfirmationAnalyzer
-from strategy.big_orders import BigOrdersDetector
-from learning.feedback_system import AdaptiveFeedbackSystem
-from utils.logger import setup_logger
+from src.data.binance_client import BinanceClient
+from src.data.orderbook import OrderBookDepth, PriceLevel
+from src.strategy.clc_engine import CLCEngine, CLCScore
+from src.strategy.context_analyzer import ContextAnalyzer
+from src.strategy.location_detector import LocationDetector
+from src.strategy.confirmation import ConfirmationAnalyzer
+from src.strategy.big_orders import BigOrdersDetector
+from src.learning.feedback_system import AdaptiveFeedbackSystem
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -482,7 +482,8 @@ class BacktestEngine:
 
         # Cooldown between trades
         last_trade = self.last_trade_time.get(symbol, 0)
-        if (timestamp - last_trade) < (self.config.trading.get('min_time_between_trades_seconds', 180) * 1000):
+        min_time_between_trades = getattr(self.config.trading, 'min_time_between_trades_seconds', 180)
+        if (timestamp - last_trade) < (min_time_between_trades * 1000):
             return False
 
         return True

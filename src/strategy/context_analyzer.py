@@ -6,7 +6,7 @@ import pandas as pd
 import asyncio
 from dataclasses import dataclass
 from typing import Any
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

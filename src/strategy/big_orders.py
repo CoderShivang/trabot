@@ -11,7 +11,7 @@ from collections import deque, defaultdict
 from dataclasses import dataclass
 from typing import Dict, List, Optional
 
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 logger = setup_logger(__name__)
 
 @dataclass

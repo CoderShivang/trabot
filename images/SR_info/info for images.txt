@@ -1,0 +1,10 @@
+A lot my strategies revolve around finding areas of Support/Resistance. However, I have been having a hard time teaching my bot how to find zones that I manually see/trade off of. Attaching a couple of images as to what I consider good S/R zones. Zones marked in purple are S/R zones and those marked in red ellipse is for teaching / refernce that I dont plot zones in choppyily/slowly trending markets and instead plot them in range markets/consolidation and then check there validity by seeing how price reacts to my zone
+
+
+Note: The ultimate goal for the bot is to trade on the 1 min TF. The images attached have marked support/resistance from 1min. The current code we have for detection is a step in right direction. However, we need to work on following:
+
+1. As timeframe to trade is 1 min, the html dashboard should display that timeframe instead of 15 min
+
+2. Add higher tf like 15 min, 5min for confluence when you mark zones on 1 min. 
+
+3. Certain times, zones work well and later get invalidated. This needs to be added. If a zone is marked, it is possible that it will get invalidated in coming days/hours when price fails to respect that. We need to remove old zones when invalidation happens. Keep zones that are not invalidated and always be on lookout for newer zones as hours/days pass.

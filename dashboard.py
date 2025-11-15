@@ -28,7 +28,7 @@ from config import load_config
 from backtesting.backtest_engine import BacktestEngine
 from learning.feedback_system import AdaptiveFeedbackSystem
 from learning.ml_optimizer import MLParameterOptimizer
-from utils.trade_explainability import create_trade_explanation, format_trade_summary, format_trade_emoji
+from src.utils.trade_explainability import create_trade_explanation, format_trade_summary, format_trade_emoji
 
 # Page config
 st.set_page_config(

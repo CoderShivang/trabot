@@ -5,6 +5,11 @@ trading:
   leverage: 100
   taker_fee_bps: 20   # 0.2% example; adjust
   paper_trading: true
+  min_time_between_trades_seconds: 180
+  btc_risk_points: 150
+  btc_target_points: 200
+  eth_risk_points: 100
+  eth_target_points: 150
 
 clc_strategy:
   context:
@@ -44,6 +49,7 @@ scoring:
 learning:
   min_labels_before_learning: 10
   learning_rate: 0.05
+  feedback_file: data/feedback.json
 notifications:
   discord:
     enabled: false

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 import pandas as pd
 import numpy as np
-from utils.logger import setup_logger
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 

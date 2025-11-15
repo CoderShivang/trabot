@@ -6,8 +6,8 @@ Websocket feed not implemented here (can be extended later).
 import asyncio
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-from data.orderbook import OrderBookDepth
-from utils.logger import setup_logger
+from src.data.orderbook import OrderBookDepth
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -61,9 +61,14 @@ class BinanceClient:
             logger.error(f"[BINANCE] recent trades error: {e}")
             return []
 
-    async def get_klines(self, symbol: str, interval: str, limit: int = 200):
+    async def get_klines(self, symbol: str, interval: str, limit: int = 200, start_time: int = None, end_time: int = None):
         try:
-            kl = self.rest.futures_klines(symbol=symbol, interval=interval, limit=limit)
+            kwargs = {'symbol': symbol, 'interval': interval, 'limit': limit}
+            if start_time:
+                kwargs['startTime'] = start_time
+            if end_time:
+                kwargs['endTime'] = end_time
+            kl = self.rest.futures_klines(**kwargs)
             return kl
         except Exception as e:
             logger.error(f"[BINANCE] klines error: {e}")
