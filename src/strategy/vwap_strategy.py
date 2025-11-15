@@ -70,7 +70,7 @@ class SRZone:
 
 @dataclass
 class TradeSignal:
-    """Trade entry signal"""
+    """Trade entry signal with ML features"""
     direction: str  # 'LONG' or 'SHORT'
     signal_type: str  # 'mean_reversion' or 'trend_continuation'
     entry_price: float  # Limit order price
@@ -81,6 +81,40 @@ class TradeSignal:
     vwap_band: float
     sr_zone: Optional[EnhancedSRZone]
     htf_confluence: bool = False  # Whether 5m/15m confirms zone
+
+    # ML Features - VWAP metrics
+    vwap_value: float = 0.0  # Current VWAP value
+    vwap_std: float = 0.0  # Standard deviation
+    vwap_upper_1std: float = 0.0
+    vwap_lower_1std: float = 0.0
+    vwap_upper_2std: float = 0.0
+    vwap_lower_2std: float = 0.0
+    vwap_distance_pct: float = 0.0  # % distance from VWAP
+    distance_to_band_dollars: float = 0.0  # Distance to entry band in $
+
+    # ML Features - Market patterns
+    vwap_resistance_rejections: int = 0  # VWAP acting as resistance
+    vwap_support_bounces: int = 0  # VWAP acting as support
+    price_structure: str = 'neutral'  # 'bullish', 'bearish', 'neutral'
+    market_regime: str = 'neutral_regime'  # 'bullish_regime', 'bearish_regime', 'neutral_regime'
+    short_term_regime: str = 'ranging'  # 'ranging', 'trending_up', 'trending_down'
+
+    # ML Features - Momentum
+    is_rapid_move: bool = False
+    momentum_direction: str = 'neutral'  # 'bullish', 'bearish', 'neutral'
+    momentum_strength: float = 0.0
+
+    # ML Features - Local S/R
+    has_overhead_resistance: bool = False
+    overhead_resistance_level: float = 0.0
+    distance_to_overhead_resistance: float = 0.0
+    has_support_below: bool = False
+    support_below_level: float = 0.0
+    distance_to_support_below: float = 0.0
+
+    # ML Features - Volatility
+    volatility_60: float = 0.0  # 60-bar ATR-like metric
+    avg_candle_range_pct: float = 0.0  # Average candle body %
 
 
 class VWAPCalculator:
@@ -620,6 +654,71 @@ class VWAPStrategy:
 
         return None
 
+    def _calculate_ml_features(
+        self,
+        df: pd.DataFrame,
+        current_price: float,
+        vwap: VWAPBands,
+        vwap_rejections: Dict,
+        price_structure: str,
+        momentum: Dict,
+        overhead_resistance: Optional[float],
+        support_below: Optional[float],
+        market_regime: str,
+        regime: str,
+        distance_to_band: float
+    ) -> Dict:
+        """
+        Package all calculated features for ML
+        Does NOT modify any logic - just collects features for storage
+        """
+        # Calculate volatility metrics
+        recent_60 = df.tail(60)
+        if len(recent_60) >= 2:
+            ranges = recent_60['high'] - recent_60['low']
+            volatility_60 = ranges.mean()
+            candle_bodies = abs(recent_60['close'] - recent_60['open'])
+            avg_candle_range_pct = (candle_bodies / recent_60['close']).mean()
+        else:
+            volatility_60 = 0.0
+            avg_candle_range_pct = 0.0
+
+        return {
+            # VWAP metrics
+            'vwap_value': vwap.vwap,
+            'vwap_std': vwap.std,
+            'vwap_upper_1std': vwap.upper_1std,
+            'vwap_lower_1std': vwap.lower_1std,
+            'vwap_upper_2std': vwap.upper_2std,
+            'vwap_lower_2std': vwap.lower_2std,
+            'vwap_distance_pct': (current_price - vwap.vwap) / vwap.vwap,
+            'distance_to_band_dollars': distance_to_band,
+
+            # Market patterns
+            'vwap_resistance_rejections': vwap_rejections['resistance_rejections'],
+            'vwap_support_bounces': vwap_rejections['support_bounces'],
+            'price_structure': price_structure,
+            'market_regime': market_regime,
+            'short_term_regime': regime,
+
+            # Momentum
+            'is_rapid_move': momentum['is_rapid'],
+            'momentum_direction': momentum['direction'],
+            'momentum_strength': momentum['strength'],
+
+            # Local S/R
+            'has_overhead_resistance': overhead_resistance is not None,
+            'overhead_resistance_level': overhead_resistance if overhead_resistance else 0.0,
+            'distance_to_overhead_resistance': abs(current_price - overhead_resistance) if overhead_resistance else 0.0,
+            'has_support_below': support_below is not None,
+            'support_below_level': support_below if support_below else 0.0,
+            'distance_to_support_below': abs(current_price - support_below) if support_below else 0.0,
+
+            # Volatility
+            'volatility_60': volatility_60,
+            'avg_candle_range_pct': avg_candle_range_pct,
+        }
+
     def analyze(self, df: pd.DataFrame, current_price: float,
                 df_5m: Optional[pd.DataFrame] = None,
                 df_15m: Optional[pd.DataFrame] = None,
@@ -815,6 +914,12 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = max(zone.level - 30, current_price - 50)
 
+                            # Calculate ML features (NO logic changes - just packaging data)
+                            ml_features = self._calculate_ml_features(
+                                df, current_price, vwap, vwap_rejections, price_structure,
+                                momentum, overhead_resistance, support_below, market_regime, regime, dist_to_lower
+                            )
+
                             htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='LONG',
@@ -826,7 +931,8 @@ class VWAPStrategy:
                                 reason=f"LONG Mean Reversion: -1std (${vwap.lower_1std:,.0f}) + Support ${zone.level:,.0f} (str:{zone.strength}){htf_str}",
                                 vwap_band=vwap.lower_1std,
                                 sr_zone=zone,
-                                htf_confluence=has_htf
+                                htf_confluence=has_htf,
+                                **ml_features  # Unpack all ML features
                             ))
 
         # 2. Trend Continuation Long: Price firmly beyond +1σ (strong uptrend)
@@ -848,6 +954,12 @@ class VWAPStrategy:
                 # Enter at current price or slightly below for limit order
                 entry = current_price - 20
 
+                # Calculate ML features (NO logic changes - just packaging data)
+                ml_features = self._calculate_ml_features(
+                    df, current_price, vwap, vwap_rejections, price_structure,
+                    momentum, overhead_resistance, support_below, market_regime, regime, distance_beyond
+                )
+
                 signals.append(TradeSignal(
                     direction='LONG',
                     signal_type='trend_continuation',
@@ -858,7 +970,8 @@ class VWAPStrategy:
                     reason=f"LONG Trend: Price ${current_price:,.0f} firmly beyond +1std (${vwap.upper_1std:,.0f}) by ${distance_beyond:,.0f}",
                     vwap_band=vwap.upper_1std,
                     sr_zone=None,  # No S/R zone required for trend continuation
-                    htf_confluence=market_regime == 'bullish_regime'
+                    htf_confluence=market_regime == 'bullish_regime',
+                    **ml_features  # Unpack all ML features
                 ))
 
         # === SHORT SETUPS ===
@@ -938,6 +1051,12 @@ class VWAPStrategy:
                         if confidence >= 50:  # Lowered from 65 for initial testing
                             entry = min(zone.level + 30, current_price + 50)
 
+                            # Calculate ML features (NO logic changes - just packaging data)
+                            ml_features = self._calculate_ml_features(
+                                df, current_price, vwap, vwap_rejections, price_structure,
+                                momentum, overhead_resistance, support_below, market_regime, regime, dist_to_upper
+                            )
+
                             htf_str = " + HTF" if has_htf else ""
                             signals.append(TradeSignal(
                                 direction='SHORT',
@@ -949,7 +1068,8 @@ class VWAPStrategy:
                                 reason=f"SHORT Mean Reversion: +1std (${vwap.upper_1std:,.0f}) + Resistance ${zone.level:,.0f} (str:{zone.strength}){htf_str}",
                                 vwap_band=vwap.upper_1std,
                                 sr_zone=zone,
-                                htf_confluence=has_htf
+                                htf_confluence=has_htf,
+                                **ml_features  # Unpack all ML features
                             ))
 
         # 4. Trend Continuation Short: Price firmly beyond -1σ (strong downtrend)
@@ -971,6 +1091,12 @@ class VWAPStrategy:
                 # Enter at current price or slightly above for limit order
                 entry = current_price + 20
 
+                # Calculate ML features (NO logic changes - just packaging data)
+                ml_features = self._calculate_ml_features(
+                    df, current_price, vwap, vwap_rejections, price_structure,
+                    momentum, overhead_resistance, support_below, market_regime, regime, distance_beyond
+                )
+
                 signals.append(TradeSignal(
                     direction='SHORT',
                     signal_type='trend_continuation',
@@ -981,7 +1107,8 @@ class VWAPStrategy:
                     reason=f"SHORT Trend: Price ${current_price:,.0f} firmly beyond -1std (${vwap.lower_1std:,.0f}) by ${distance_beyond:,.0f}",
                     vwap_band=vwap.lower_1std,
                     sr_zone=None,  # No S/R zone required for trend continuation
-                    htf_confluence=market_regime == 'bearish_regime'
+                    htf_confluence=market_regime == 'bearish_regime',
+                    **ml_features  # Unpack all ML features
                 ))
 
         # Sort by confidence
