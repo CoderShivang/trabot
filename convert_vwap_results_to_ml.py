@@ -102,6 +102,30 @@ def convert_backtest_to_ml_format(results_file: str, output_file: str = None):
             df['is_mean_reversion'] = (df['signal_type'] == 'mean_reversion').astype(int)
             df['is_trend_continuation'] = (df['signal_type'] == 'trend_continuation').astype(int)
 
+        # Encode market_regime as categorical features
+        if 'market_regime' in df.columns:
+            df['is_bullish_regime'] = (df['market_regime'] == 'bullish_regime').astype(int)
+            df['is_bearish_regime'] = (df['market_regime'] == 'bearish_regime').astype(int)
+            df['is_neutral_regime'] = (df['market_regime'] == 'neutral_regime').astype(int)
+
+        # Encode short_term_regime as categorical features
+        if 'short_term_regime' in df.columns:
+            df['is_ranging'] = (df['short_term_regime'] == 'ranging').astype(int)
+            df['is_trending_up'] = (df['short_term_regime'] == 'trending_up').astype(int)
+            df['is_trending_down'] = (df['short_term_regime'] == 'trending_down').astype(int)
+
+        # Encode price_structure as categorical features
+        if 'price_structure' in df.columns:
+            df['is_bullish_structure'] = (df['price_structure'] == 'bullish').astype(int)
+            df['is_bearish_structure'] = (df['price_structure'] == 'bearish').astype(int)
+            df['is_neutral_structure'] = (df['price_structure'] == 'neutral').astype(int)
+
+        # Encode momentum_direction as categorical features
+        if 'momentum_direction' in df.columns:
+            df['is_bullish_momentum'] = (df['momentum_direction'] == 'bullish').astype(int)
+            df['is_bearish_momentum'] = (df['momentum_direction'] == 'bearish').astype(int)
+            df['is_neutral_momentum'] = (df['momentum_direction'] == 'neutral').astype(int)
+
     # Add temporal features from timestamp/entry_time
     timestamp_col = 'entry_time' if 'entry_time' in df.columns else 'timestamp'
     if timestamp_col in df.columns:
@@ -121,11 +145,30 @@ def convert_backtest_to_ml_format(results_file: str, output_file: str = None):
         'entry_time', 'entry_price', 'exit_price', 'signal_type', 'direction',
 
         # VWAP features (calculated + from signal field)
-        'vwap_distance', 'vwap_distance_abs', 'vwap_band',
+        'vwap_value', 'vwap_std', 'vwap_upper_1std', 'vwap_lower_1std',
+        'vwap_upper_2std', 'vwap_lower_2std', 'vwap_distance_pct',
+        'distance_to_band_dollars', 'vwap_distance', 'vwap_distance_abs', 'vwap_band',
         'vwap_band_position', 'vwap_slope',
         'distance_to_upper_2std', 'distance_to_lower_2std',
         'vwap_band_width', 'vwap_reversion_score',
         'band_position', 'price_vs_vwap',
+
+        # Market pattern features (from signal field)
+        'vwap_resistance_rejections', 'vwap_support_bounces',
+        'is_bullish_regime', 'is_bearish_regime', 'is_neutral_regime',
+        'is_ranging', 'is_trending_up', 'is_trending_down',
+        'is_bullish_structure', 'is_bearish_structure', 'is_neutral_structure',
+
+        # Momentum features (from signal field)
+        'is_rapid_move', 'momentum_strength',
+        'is_bullish_momentum', 'is_bearish_momentum', 'is_neutral_momentum',
+
+        # Local S/R features (from signal field)
+        'has_overhead_resistance', 'overhead_resistance_level', 'distance_to_overhead_resistance',
+        'has_support_below', 'support_below_level', 'distance_to_support_below',
+
+        # Volatility features (from signal field)
+        'volatility_60', 'avg_candle_range_pct',
 
         # Zone features (calculated + from signal field)
         'zone_strength', 'zone_level', 'zone_width', 'distance_to_zone', 'zone_position',

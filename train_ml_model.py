@@ -77,8 +77,9 @@ class VWAPMLTrainer:
             'duration_minutes', 'quantity',
             'stop_loss', 'take_profit',
             'entry_fee', 'exit_fee', 'total_fees',
-            # String columns (we'll encode separately)
-            'signal_type', 'direction', 'signal', 'zone_type'
+            # String columns (encoded separately)
+            'signal_type', 'direction', 'signal', 'zone_type',
+            'market_regime', 'short_term_regime', 'price_structure', 'momentum_direction'
         ]
 
         feature_cols = [col for col in df.columns if col not in exclude_cols]
