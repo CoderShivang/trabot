@@ -71,6 +71,37 @@ def convert_backtest_to_ml_format(results_file: str, output_file: str = None):
                 df[col] = signal_df[col]
         print(f"   Added {len(signal_df.columns)} features from signal")
 
+        # Calculate derived VWAP features from available data
+        if 'vwap_band' in df.columns and 'entry_price' in df.columns:
+            # VWAP distance (% away from band)
+            df['vwap_distance'] = (df['entry_price'] - df['vwap_band']) / df['entry_price']
+            # Absolute distance in dollars
+            df['vwap_distance_abs'] = abs(df['entry_price'] - df['vwap_band'])
+            print("   ✓ Calculated vwap_distance features")
+
+        # Calculate zone features from sr_zone object
+        if 'sr_zone.strength' in df.columns:
+            df['zone_strength'] = df['sr_zone.strength']
+            df['zone_level'] = df['sr_zone.level']
+            df['zone_width'] = df['sr_zone.upper'] - df['sr_zone.lower']
+            df['distance_to_zone'] = abs(df['entry_price'] - df['sr_zone.level'])
+            # Relative position within zone (0 = lower boundary, 1 = upper boundary)
+            df['zone_position'] = (df['entry_price'] - df['sr_zone.lower']) / (df['sr_zone.upper'] - df['sr_zone.lower'])
+            # Zone type encoding
+            df['is_support_zone'] = (df['sr_zone.zone_type'] == 'support').astype(int)
+            df['is_resistance_zone'] = (df['sr_zone.zone_type'] == 'resistance').astype(int)
+            df['is_both_zone'] = (df['sr_zone.zone_type'] == 'both').astype(int)
+            print("   ✓ Calculated zone-based features")
+
+        # Encode boolean htf_confluence
+        if 'htf_confluence' in df.columns:
+            df['htf_confluence'] = df['htf_confluence'].astype(int)
+
+        # Encode signal_type as categorical features
+        if 'signal_type' in df.columns:
+            df['is_mean_reversion'] = (df['signal_type'] == 'mean_reversion').astype(int)
+            df['is_trend_continuation'] = (df['signal_type'] == 'trend_continuation').astype(int)
+
     # Add temporal features from timestamp/entry_time
     timestamp_col = 'entry_time' if 'entry_time' in df.columns else 'timestamp'
     if timestamp_col in df.columns:
@@ -89,18 +120,23 @@ def convert_backtest_to_ml_format(results_file: str, output_file: str = None):
         # Trade basics
         'entry_time', 'entry_price', 'exit_price', 'signal_type', 'direction',
 
-        # VWAP features (from signal field)
-        'vwap_distance', 'vwap_band_position', 'vwap_slope',
+        # VWAP features (calculated + from signal field)
+        'vwap_distance', 'vwap_distance_abs', 'vwap_band',
+        'vwap_band_position', 'vwap_slope',
         'distance_to_upper_2std', 'distance_to_lower_2std',
         'vwap_band_width', 'vwap_reversion_score',
         'band_position', 'price_vs_vwap',
 
-        # Zone features (from signal field)
-        'zone_strength', 'zone_touches', 'zone_bounces',
+        # Zone features (calculated + from signal field)
+        'zone_strength', 'zone_level', 'zone_width', 'distance_to_zone', 'zone_position',
+        'is_support_zone', 'is_resistance_zone', 'is_both_zone',
+        'zone_touches', 'zone_bounces',
         'zone_liquidity_grabs', 'zone_age_minutes',
-        'zone_width', 'zone_confidence',
-        'distance_to_zone', 'is_support_zone', 'is_resistance_zone',
-        'zone_type', 'closest_zone_strength',
+        'zone_confidence', 'closest_zone_strength',
+
+        # Signal features
+        'confidence', 'htf_confluence',
+        'is_mean_reversion', 'is_trend_continuation',
 
         # Price features
         'volatility_20', 'price_momentum_5',
