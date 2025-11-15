@@ -66,15 +66,31 @@ class VWAPMLTrainer:
 
         # Define feature columns (all numeric columns except metadata and target)
         exclude_cols = [
-            'timestamp', 'symbol', 'entry_price', 'exit_price',
-            'pnl', 'pnl_pct', 'is_win', 'exit_reason', 'duration_minutes',
-            'signal_type'  # We'll encode this separately
+            # Timestamps and IDs
+            'timestamp', 'entry_time', 'exit_time', 'datetime',
+            'symbol', 'position_id',
+            # Prices (outcomes, not features)
+            'entry_price', 'exit_price',
+            # Outcomes (target variables and results)
+            'pnl', 'pnl_pct', 'is_win', 'exit_reason',
+            # Trade metadata (not predictive features)
+            'duration_minutes', 'quantity',
+            'stop_loss', 'take_profit',
+            'entry_fee', 'exit_fee', 'total_fees',
+            # String columns (we'll encode separately)
+            'signal_type', 'direction', 'signal', 'zone_type'
         ]
 
         feature_cols = [col for col in df.columns if col not in exclude_cols]
 
-        # Encode signal_type
-        df['is_long'] = (df['signal_type'] == 'LONG').astype(int)
+        # Encode signal_type or direction as binary feature
+        if 'signal_type' in df.columns:
+            df['is_long'] = (df['signal_type'] == 'LONG').astype(int)
+        elif 'direction' in df.columns:
+            df['is_long'] = (df['direction'] == 'LONG').astype(int)
+        else:
+            df['is_long'] = 1  # Default to long if neither exists
+
         feature_cols.append('is_long')
 
         X = df[feature_cols].copy()
