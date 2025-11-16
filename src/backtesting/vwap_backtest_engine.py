@@ -471,43 +471,41 @@ class VWAPBacktestEngine:
 
     def _place_entry_order(self, signal: TradeSignal, timestamp: int):
         """Place limit entry order with leverage"""
-        # Calculate position size based on risk with leverage
-        # TIERED POSITION SIZING: Scale position size based on capital growth
-        # - Tier 1 ($100-$199): Use $100 as base
-        # - Tier 2 ($200-$399): Use $200 as base
-        # - Tier 3 ($400-$799): Use $400 as base
-        # - Tier 4 ($800-$1599): Use $800 as base
-        # Tiers DOUBLE each time to prevent runaway compounding
+        # FIXED POSITION SIZING: Always use initial capital to prevent compounding
+        # This ensures realistic, sustainable results
+        position_base = self.initial_capital
 
-        # Calculate tier based on discrete ranges
-        if self.current_capital < 200:
-            position_base = 100
-        elif self.current_capital < 400:
-            position_base = 200
-        elif self.current_capital < 800:
-            position_base = 400
-        elif self.current_capital < 1600:
-            position_base = 800
-        else:
-            position_base = 1600  # Cap at Tier 5
-
-        risk_amount = position_base * self.risk_per_trade
         stop_distance = abs(signal.entry_price - signal.stop_loss)
+
+        # MINIMUM STOP DISTANCE: 0.1% of entry price to prevent unrealistic position sizes
+        min_stop_distance = signal.entry_price * 0.001  # 0.1%
 
         if stop_distance == 0:
             logger.warning("[RISK] Stop distance is zero, skipping trade")
             return
 
+        if stop_distance < min_stop_distance:
+            logger.warning(f"[RISK] Stop too tight (${stop_distance:.2f} < ${min_stop_distance:.2f}), skipping trade")
+            return  # Skip trades with stops that are too tight
+
+        risk_amount = position_base * self.risk_per_trade
+
         # Calculate quantity: risk_amount / stop_distance
         # With leverage, we can control (quantity * price) notional value
         quantity = risk_amount / stop_distance
 
-        # Check if notional value exceeds leverage limit
-        # Cap based on tiered position base
+        # Check if notional value exceeds leverage limits
         notional_value = quantity * signal.entry_price
         max_notional = position_base * self.leverage
 
-        if notional_value > max_notional:
+        # ABSOLUTE CAP: Never exceed 20x initial capital (safety limit)
+        absolute_max_notional = self.initial_capital * 20
+
+        if notional_value > absolute_max_notional:
+            # Cap to absolute maximum
+            quantity = absolute_max_notional / signal.entry_price
+            logger.warning(f"[RISK] Position capped to 20x initial capital (${absolute_max_notional:,.2f})")
+        elif notional_value > max_notional:
             # Cap the position size to max leverage
             quantity = max_notional / signal.entry_price
             logger.warning(f"[RISK] Position size capped by leverage limit (${max_notional:,.2f})")
