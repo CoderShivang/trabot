@@ -322,6 +322,8 @@ class VWAPMLBacktestEngine:
         for idx in range(lookback, len(df)):
             pbar.update(1)
 
+            current_bar = df.iloc[idx]
+
             # Calculate current win rate
             if len(self.closed_trades) > 0:
                 wins = sum(1 for t in self.closed_trades if t.pnl > 0)
@@ -329,15 +331,15 @@ class VWAPMLBacktestEngine:
             else:
                 win_rate = 0.0
 
-            # Update progress bar with trades, capital, win rate, and leverage
-            pbar.set_postfix({
-                "Trades": len(self.closed_trades),
-                "Capital": f"${self.current_capital:.0f}",
-                "WinRate": f"{win_rate:.1f}%",
-                "Lev": f"{self.current_leverage}x"
-            })
+            # Format current date for display
+            current_date = current_bar['timestamp'].strftime('%Y-%m-%d')
 
-            current_bar = df.iloc[idx]
+            # Update progress bar with date, trades, capital, win rate, and leverage
+            pbar.set_postfix_str(
+                f"Date: {current_date} | Trades: {len(self.closed_trades)} | "
+                f"Capital: ${self.current_capital:.0f} | WR: {win_rate:.1f}% | "
+                f"Leverage: {self.current_leverage}x"
+            )
             timestamp = int(current_bar['timestamp'].timestamp() * 1000)
             open_price = float(current_bar['open'])
             high = float(current_bar['high'])
