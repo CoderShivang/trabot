@@ -185,6 +185,10 @@ class VWAPBacktestEngine:
             start_date: Start date for backtest
             end_date: End date for backtest
         """
+        # Store dates for results metadata
+        self.start_date = start_date
+        self.end_date = end_date
+
         logger.info(f"\n{'='*80}")
         logger.info(f"VWAP STRATEGY BACKTEST - {self.symbol}")
         logger.info(f"{'='*80}")
@@ -301,7 +305,7 @@ class VWAPBacktestEngine:
 
         # Progress bar for simulation
         logger.info(f"[BACKTEST] Simulating {len(df) - lookback} bars...\n")
-        pbar = tqdm(total=len(df) - lookback, desc="Backtesting", unit="bar", ncols=100)
+        pbar = tqdm(total=len(df) - lookback, desc="Backtesting", unit="bar", ncols=140)
 
         for idx in range(lookback, len(df)):
             pbar.update(1)
@@ -884,6 +888,9 @@ class VWAPBacktestEngine:
             'backtest_config': {
                 'symbol': self.symbol,
                 'timeframe': self.timeframe,
+                'start_date': self.start_date.strftime('%Y-%m-%d'),
+                'end_date': self.end_date.strftime('%Y-%m-%d'),
+                'period_days': (self.end_date - self.start_date).days,
                 'initial_capital': self.initial_capital,
                 'leverage': self.leverage,
                 'max_position_size': self.initial_capital * self.leverage,
