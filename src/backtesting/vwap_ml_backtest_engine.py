@@ -157,6 +157,7 @@ class VWAPMLBacktestEngine:
 
         # State
         self.current_capital = self.initial_capital
+        self.current_leverage = 20  # Track current leverage for display
         self.positions: List[BacktestPosition] = []
         self.pending_entry_orders: List[LimitOrder] = []
         self.closed_trades: List[BacktestPosition] = []
@@ -320,7 +321,21 @@ class VWAPMLBacktestEngine:
 
         for idx in range(lookback, len(df)):
             pbar.update(1)
-            pbar.set_postfix({"Trades": len(self.closed_trades), "Capital": f"${self.current_capital:.0f}"})
+
+            # Calculate current win rate
+            if len(self.closed_trades) > 0:
+                wins = sum(1 for t in self.closed_trades if t.pnl > 0)
+                win_rate = (wins / len(self.closed_trades)) * 100
+            else:
+                win_rate = 0.0
+
+            # Update progress bar with capital, win rate, and leverage
+            pbar.set_postfix({
+                "Capital": f"${self.current_capital:.0f}",
+                "WinRate": f"{win_rate:.1f}%",
+                "Lev": f"{self.current_leverage}x"
+            })
+
             current_bar = df.iloc[idx]
             timestamp = int(current_bar['timestamp'].timestamp() * 1000)
             open_price = float(current_bar['open'])
@@ -529,9 +544,9 @@ class VWAPMLBacktestEngine:
 
     def _place_entry_order(self, signal: TradeSignal, timestamp: int):
         """Place limit entry order with leverage"""
-        # FRACTIONAL COMPOUNDING: Use current capital with a cap for realistic growth
-        # Cap at 3x initial capital to prevent runaway growth
-        position_base = min(self.current_capital, self.initial_capital * 3)
+        # FULL COMPOUNDING: Use current capital for realistic growth
+        # Dynamic leverage naturally controls position sizes as account grows
+        position_base = self.current_capital
 
         # DYNAMIC LEVERAGE: Reduce leverage as capital grows (safer, more stable)
         # $100-$199: 20x leverage
@@ -546,6 +561,9 @@ class VWAPMLBacktestEngine:
             current_leverage = 10
         else:
             current_leverage = 5
+
+        # Store current leverage for display
+        self.current_leverage = current_leverage
 
         stop_distance = abs(signal.entry_price - signal.stop_loss)
 
