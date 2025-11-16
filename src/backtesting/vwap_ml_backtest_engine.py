@@ -122,20 +122,30 @@ class BacktestStats:
     sl_fills: int = 0
 
 
-class VWAPBacktestEngine:
+class VWAPMLBacktestEngine:
     """
-    Backtest engine for VWAP strategy
+    ML-Enhanced Backtest engine for VWAP strategy with real-time filtering
 
-    All orders are limit orders with realistic fill simulation
+    Features:
+    - ML-based trade filtering using walk-forward analysis
+    - 3-model ensemble (Random Forest, Gradient Boosting, XGBoost)
+    - All orders are limit orders with realistic fill simulation
+    - Prevents look-ahead bias through proper train/test splits
     """
 
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, ml_optimizer=None):
         self.config = config
         self.symbol = config.get('symbol', 'BTCUSDT')
         self.timeframe = config.get('timeframe', '1m')
         self.initial_capital = config.get('initial_capital', 100)
         self.risk_per_trade = config.get('risk_per_trade', 0.02)  # 2% per trade
         self.leverage = config.get('leverage', 20)  # 20x leverage for futures
+
+        # ML Filtering
+        self.ml_optimizer = ml_optimizer  # VWAPMLOptimizer instance
+        self.ml_enabled = ml_optimizer is not None
+        self.ml_filtered_count = 0  # Track how many trades were filtered out
+        self.ml_signals_evaluated = 0  # Track total signals evaluated
 
         # Fees (limit orders = maker fee, based on notional value)
         self.maker_fee = 0.0002  # 0.02% Binance maker fee on notional value
@@ -159,7 +169,7 @@ class VWAPBacktestEngine:
         self.peak_equity = self.initial_capital
 
         # Results directory
-        self.results_dir = Path('data/vwap_backtest')
+        self.results_dir = Path('data/vwap_ml_backtest')
         self.results_dir.mkdir(parents=True, exist_ok=True)
 
     def _create_binance_config(self):
@@ -240,6 +250,12 @@ class VWAPBacktestEngine:
         ohlcv_path = Path(results_path).parent / 'ohlcv_data.parquet'
         df.to_parquet(ohlcv_path, index=False)
         logger.debug(f"[DATA] Saved OHLCV data to: {ohlcv_path}")
+
+        # Load and return the results from the saved file
+        with open(results_path, 'r') as f:
+            results = json.load(f)
+
+        return results
 
     async def _fetch_historical_data(self, start_date: datetime, end_date: datetime) -> List:
         """Fetch historical klines from Binance mainnet"""
@@ -372,7 +388,49 @@ class VWAPBacktestEngine:
                     tqdm.write(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f}")
 
                     if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
-                        self._place_entry_order(best_signal, timestamp)
+                        # === ML FILTERING ===
+                        if self.ml_enabled and self.ml_optimizer.is_trained:
+                            self.ml_signals_evaluated += 1
+
+                            # Prepare market data for ML
+                            market_data = {
+                                'current_price': close,
+                                'timestamp': timestamp,
+                                'volume': df.iloc[idx]['volume'],
+                                'volatility': df.iloc[idx]['high'] - df.iloc[idx]['low'],
+                                'spread_bps': 10  # Approximate
+                            }
+
+                            # Convert TradeSignal object to dict for ML optimizer
+                            signal_dict = {
+                                'direction': best_signal.direction,
+                                'signal_type': best_signal.signal_type,
+                                'entry_price': best_signal.entry_price,
+                                'confidence': best_signal.confidence,
+                                'vwap_band': best_signal.vwap_band,
+                                'htf_confluence': best_signal.htf_confluence,
+                                'zone_strength': best_signal.sr_zone.strength if best_signal.sr_zone else 0,
+                                'zone_type': best_signal.sr_zone.zone_type if best_signal.sr_zone else 'unknown'
+                            }
+
+                            # Get ML prediction
+                            win_prob, model_probs = self.ml_optimizer.predict_win_probability(
+                                signal_dict,
+                                market_data
+                            )
+
+                            logger.info(f"[ML-FILTER] Win Prob: {win_prob:.1%} | RF: {model_probs['rf']:.1%} GB: {model_probs['gb']:.1%} XGB: {model_probs['xgb']:.1%}")
+
+                            # Only take trade if ML predicts high enough win probability
+                            if win_prob >= self.ml_optimizer.min_win_probability:
+                                logger.info(f"[ML-APPROVED] Trade passed ML filter (>{self.ml_optimizer.min_win_probability:.0%})")
+                                self._place_entry_order(best_signal, timestamp)
+                            else:
+                                self.ml_filtered_count += 1
+                                logger.info(f"[ML-REJECTED] Trade filtered out ({win_prob:.1%} < {self.ml_optimizer.min_win_probability:.0%})")
+                        else:
+                            # No ML or ML not trained yet - take all trades
+                            self._place_entry_order(best_signal, timestamp)
 
         # Close progress bar
         pbar.close()
@@ -893,7 +951,16 @@ class VWAPBacktestEngine:
                 'max_position_size': self.initial_capital * self.leverage,
                 'final_capital': float(self.current_capital),
                 'risk_per_trade': self.risk_per_trade,
-                'maker_fee': self.maker_fee
+                'maker_fee': self.maker_fee,
+                'ml_enabled': self.ml_enabled,
+                'ml_min_win_prob': self.ml_optimizer.min_win_probability if self.ml_enabled else None
+            },
+            'ml_filtering_stats': {
+                'ml_enabled': self.ml_enabled,
+                'signals_evaluated': self.ml_signals_evaluated,
+                'signals_filtered': self.ml_filtered_count,
+                'signals_approved': self.ml_signals_evaluated - self.ml_filtered_count if self.ml_enabled else 0,
+                'filter_rate': (self.ml_filtered_count / self.ml_signals_evaluated * 100) if self.ml_signals_evaluated > 0 else 0
             },
             'performance': {
                 'total_trades': self.stats.total_trades,
