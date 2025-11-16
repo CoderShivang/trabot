@@ -582,14 +582,7 @@ class VWAPMLBacktestEngine:
         notional_value = quantity * signal.entry_price
         max_notional = position_base * current_leverage
 
-        # ABSOLUTE CAP: Never exceed 20x initial capital (safety limit)
-        absolute_max_notional = self.initial_capital * 20
-
-        if notional_value > absolute_max_notional:
-            # Cap to absolute maximum
-            quantity = absolute_max_notional / signal.entry_price
-            logger.warning(f"[RISK] Position capped to 20x initial capital (${absolute_max_notional:,.2f})")
-        elif notional_value > max_notional:
+        if notional_value > max_notional:
             # Cap the position size to current leverage limit
             quantity = max_notional / signal.entry_price
             logger.warning(f"[RISK] Position capped by {current_leverage}x leverage (${max_notional:,.2f})")
