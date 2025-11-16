@@ -529,9 +529,23 @@ class VWAPMLBacktestEngine:
 
     def _place_entry_order(self, signal: TradeSignal, timestamp: int):
         """Place limit entry order with leverage"""
-        # FIXED POSITION SIZING: Always use initial capital to prevent compounding
-        # This ensures realistic, sustainable results
-        position_base = self.initial_capital
+        # FRACTIONAL COMPOUNDING: Use current capital with a cap for realistic growth
+        # Cap at 3x initial capital to prevent runaway growth
+        position_base = min(self.current_capital, self.initial_capital * 3)
+
+        # DYNAMIC LEVERAGE: Reduce leverage as capital grows (safer, more stable)
+        # $100-$199: 20x leverage
+        # $200-$399: 15x leverage
+        # $400-$599: 10x leverage
+        # $600+:     5x leverage (conservative for larger accounts)
+        if self.current_capital < 200:
+            current_leverage = 20
+        elif self.current_capital < 400:
+            current_leverage = 15
+        elif self.current_capital < 600:
+            current_leverage = 10
+        else:
+            current_leverage = 5
 
         stop_distance = abs(signal.entry_price - signal.stop_loss)
 
@@ -547,7 +561,7 @@ class VWAPMLBacktestEngine:
 
         # Check if notional value exceeds leverage limits
         notional_value = quantity * signal.entry_price
-        max_notional = position_base * self.leverage
+        max_notional = position_base * current_leverage
 
         # ABSOLUTE CAP: Never exceed 20x initial capital (safety limit)
         absolute_max_notional = self.initial_capital * 20
@@ -557,9 +571,9 @@ class VWAPMLBacktestEngine:
             quantity = absolute_max_notional / signal.entry_price
             logger.warning(f"[RISK] Position capped to 20x initial capital (${absolute_max_notional:,.2f})")
         elif notional_value > max_notional:
-            # Cap the position size to max leverage
+            # Cap the position size to current leverage limit
             quantity = max_notional / signal.entry_price
-            logger.warning(f"[RISK] Position size capped by leverage limit (${max_notional:,.2f})")
+            logger.warning(f"[RISK] Position capped by {current_leverage}x leverage (${max_notional:,.2f})")
 
         # Create limit order
         order_id = f"ENTRY_{timestamp}_{signal.direction}"
