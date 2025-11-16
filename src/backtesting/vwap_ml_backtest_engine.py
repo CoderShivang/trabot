@@ -329,8 +329,9 @@ class VWAPMLBacktestEngine:
             else:
                 win_rate = 0.0
 
-            # Update progress bar with capital, win rate, and leverage
+            # Update progress bar with trades, capital, win rate, and leverage
             pbar.set_postfix({
+                "Trades": len(self.closed_trades),
                 "Capital": f"${self.current_capital:.0f}",
                 "WinRate": f"{win_rate:.1f}%",
                 "Lev": f"{self.current_leverage}x"
