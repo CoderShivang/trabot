@@ -4,7 +4,21 @@
       "Bash(break)",
       "Bash(fi)",
       "Bash(done)",
-      "Bash(tee:*)"
+      "Bash(tee:*)",
+      "Bash(pgrep:*)",
+      "Bash(tasklist:*)",
+      "Bash(findstr:*)",
+      "Bash(python train_ml_and_test.py:*)",
+      "Bash(python:*)",
+      "Bash(pkill:*)",
+      "Bash(taskkill:*)",
+      "Bash(C:/Users/shivang/trabot/ml_backtest_progress.log)",
+      "Bash(echo:*)",
+      "Bash(Get-Content -Tail 10 C:/Users/shivang/trabot/training_180d_progress.log)",
+      "Bash(Get-Content -Tail 10 C:/Users/shivang/trabot/baseline_90d_progress.log)",
+      "Bash(find:*)",
+      "Bash(C:/Users/shivang/trabot/training_180d_progress.log)",
+      "Bash(powershell \"Get-Process python | Stop-Process -Force\")"
     ],
     "deny": [],
     "ask": []

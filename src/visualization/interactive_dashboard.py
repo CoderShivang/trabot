@@ -57,12 +57,16 @@ class InteractiveDashboard:
         maker_fee = self.config.get('maker_fee', 0.0002)
 
         for trade in self.trades:
-            # Extract date from entry timestamp
-            date = pd.to_datetime(trade['entry_time'], unit='ms').date()
+            # Extract date from entry timestamp (timezone-aware)
+            # Convert to datetime, normalize to UTC, then get date as string for consistency
+            dt = pd.to_datetime(trade['entry_time'], unit='ms', utc=True)
+            date = dt.date()
+            date_str = str(date)  # Store as string for consistent comparison
 
-            if date not in daily_data:
-                daily_data[date] = {
+            if date_str not in daily_data:
+                daily_data[date_str] = {
                     'date': date,
+                    'date_str': date_str,
                     'pnl': 0,
                     'trades': 0,
                     'wins': 0,
@@ -70,22 +74,22 @@ class InteractiveDashboard:
                     'total_fees': 0
                 }
 
-            daily_data[date]['pnl'] += trade['pnl']
-            daily_data[date]['trades'] += 1
+            daily_data[date_str]['pnl'] += trade['pnl']
+            daily_data[date_str]['trades'] += 1
 
             # Get fees for this trade
             if 'total_fees' in trade and trade['total_fees'] is not None:
-                daily_data[date]['total_fees'] += trade['total_fees']
+                daily_data[date_str]['total_fees'] += trade['total_fees']
             elif 'quantity' in trade:
                 # Calculate fees for old backtests
                 entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
                 exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
-                daily_data[date]['total_fees'] += entry_fee + exit_fee
+                daily_data[date_str]['total_fees'] += entry_fee + exit_fee
 
             if trade['pnl'] > 0:
-                daily_data[date]['wins'] += 1
+                daily_data[date_str]['wins'] += 1
             else:
-                daily_data[date]['losses'] += 1
+                daily_data[date_str]['losses'] += 1
 
         # Convert to sorted list (by date)
         daily_list = sorted(daily_data.values(), key=lambda x: x['date'], reverse=True)
@@ -102,7 +106,7 @@ class InteractiveDashboard:
 
             formatted_data.append({
                 'date_str': day['date'].strftime('%Y-%m-%d'),
-                'date_obj': str(day['date']),  # For filtering
+                'date_obj': day['date_str'],  # For filtering - now uses consistent string
                 'pnl': day['pnl'],  # Numeric for sorting
                 'total_fees': day['total_fees'],  # Numeric for sorting
                 'trades': day['trades'],
@@ -112,6 +116,49 @@ class InteractiveDashboard:
             })
 
         return formatted_data
+
+    def _aggregate_monthly_pnl(self):
+        """Aggregate trades by month and calculate monthly P&L"""
+        monthly_data = {}
+        maker_fee = self.config.get('maker_fee', 0.0002)
+
+        for trade in self.trades:
+            # Extract year-month from entry timestamp (timezone-aware)
+            dt = pd.to_datetime(trade['entry_time'], unit='ms', utc=True)
+            year_month = f"{dt.year}-{dt.month:02d}"  # Format: YYYY-MM
+
+            if year_month not in monthly_data:
+                monthly_data[year_month] = {
+                    'year_month': year_month,
+                    'month_name': dt.strftime('%B %Y'),  # e.g., "January 2024"
+                    'pnl': 0,
+                    'trades': 0,
+                    'wins': 0,
+                    'losses': 0,
+                    'total_fees': 0
+                }
+
+            monthly_data[year_month]['pnl'] += trade['pnl']
+            monthly_data[year_month]['trades'] += 1
+
+            # Get fees for this trade
+            if 'total_fees' in trade and trade['total_fees'] is not None:
+                monthly_data[year_month]['total_fees'] += trade['total_fees']
+            elif 'quantity' in trade:
+                # Calculate fees for old backtests
+                entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                monthly_data[year_month]['total_fees'] += entry_fee + exit_fee
+
+            if trade['pnl'] > 0:
+                monthly_data[year_month]['wins'] += 1
+            else:
+                monthly_data[year_month]['losses'] += 1
+
+        # Convert to sorted list (by year-month)
+        monthly_list = sorted(monthly_data.values(), key=lambda x: x['year_month'], reverse=True)
+
+        return monthly_list
 
     def _create_trades_by_day_chart(self):
         """Create bar chart showing win/loss breakdown by day of week"""
@@ -208,6 +255,118 @@ class InteractiveDashboard:
             showlegend=False,
             margin=dict(l=50, r=50, t=50, b=50),
             yaxis=dict(range=[0, 100])
+        )
+
+        return fig
+
+    def _create_monthly_pnl_chart(self):
+        """Create bar chart showing monthly P&L comparison"""
+        monthly_data = self._aggregate_monthly_pnl()
+
+        if not monthly_data:
+            # Return empty chart if no data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No monthly data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Sort by year-month for chronological order
+        monthly_data = sorted(monthly_data, key=lambda x: x['year_month'])
+
+        months = [m['month_name'] for m in monthly_data]
+        pnls = [m['pnl'] for m in monthly_data]
+        colors = ['#27ae60' if pnl > 0 else '#e74c3c' for pnl in pnls]
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=months,
+            y=pnls,
+            marker_color=colors,
+            text=[f'${pnl:,.2f}' for pnl in pnls],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>P&L: $%{y:,.2f}<extra></extra>'
+        ))
+
+        # Add zero reference line
+        fig.add_hline(y=0, line_color="gray", line_width=1)
+
+        fig.update_layout(
+            title='Monthly P&L Comparison',
+            xaxis_title='Month',
+            yaxis_title='P&L ($)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+            xaxis=dict(tickangle=-45)
+        )
+
+        return fig
+
+    def _create_monthly_winrate_chart(self):
+        """Create bar chart showing monthly win rate comparison"""
+        monthly_data = self._aggregate_monthly_pnl()
+
+        if not monthly_data:
+            # Return empty chart if no data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No monthly data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Sort by year-month for chronological order
+        monthly_data = sorted(monthly_data, key=lambda x: x['year_month'])
+
+        months = [m['month_name'] for m in monthly_data]
+        win_rates = []
+        colors = []
+        trade_counts = []
+
+        for m in monthly_data:
+            total_trades = m['wins'] + m['losses']
+            if total_trades > 0:
+                win_rate = (m['wins'] / total_trades) * 100
+                win_rates.append(win_rate)
+                colors.append('#27ae60' if win_rate >= 50 else '#e74c3c')
+                trade_counts.append(total_trades)
+            else:
+                win_rates.append(0)
+                colors.append('#95a5a6')
+                trade_counts.append(0)
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=months,
+            y=win_rates,
+            marker_color=colors,
+            text=[f'{wr:.1f}%<br>({tc} trades)' for wr, tc in zip(win_rates, trade_counts)],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>'
+        ))
+
+        # Add 50% reference line
+        fig.add_hline(y=50, line_dash="dash", line_color="gray",
+                      annotation_text="50% Break-even",
+                      annotation_position="right")
+
+        fig.update_layout(
+            title='Monthly Win Rate Comparison',
+            xaxis_title='Month',
+            yaxis_title='Win Rate (%)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=100),
+            yaxis=dict(range=[0, max(win_rates + [100]) * 1.1]),
+            xaxis=dict(tickangle=-45)
         )
 
         return fig
@@ -389,6 +548,37 @@ class InteractiveDashboard:
                         dcc.Graph(
                             id='winrate-by-day-chart',
                             figure=self._create_winrate_by_day_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
+                ], style={'width': '100%'}),
+
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Monthly Performance Comparison Section
+            html.Div([
+                html.H3("Monthly Performance Comparison", style={'color': '#34495e'}),
+                html.P("Month-by-month P&L and win rate analysis",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+                # Two column layout for charts
+                html.Div([
+                    # Left: Monthly P&L
+                    html.Div([
+                        dcc.Graph(
+                            id='monthly-pnl-chart',
+                            figure=self._create_monthly_pnl_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+
+                    # Right: Monthly win rate
+                    html.Div([
+                        dcc.Graph(
+                            id='monthly-winrate-chart',
+                            figure=self._create_monthly_winrate_chart(),
                             style={'height': '400px'}
                         )
                     ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
@@ -711,7 +901,9 @@ class InteractiveDashboard:
 
         # Filter by date if one is selected
         if selected_date:
-            filtered = [t for t in filtered if str(pd.to_datetime(t['entry_time'], unit='ms').date()) == selected_date]
+            # Use UTC timezone for consistency with _aggregate_daily_pnl
+            filtered = [t for t in filtered
+                       if str(pd.to_datetime(t['entry_time'], unit='ms', utc=True).date()) == selected_date]
 
         if outcome != 'all':
             filtered = [t for t in filtered if (t['pnl'] > 0) == (outcome == 'win')]

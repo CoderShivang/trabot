@@ -62,14 +62,15 @@ class VWAPMLBacktest:
         # Initialize ML optimizer
         self.ml_optimizer = VWAPMLOptimizer(min_win_probability=min_win_probability)
 
-        # Initialize backtest engine
-        self.engine = VWAPBacktestEngine(
-            symbol=symbol,
-            timeframe=timeframe,
-            initial_capital=initial_capital,
-            leverage=leverage,
-            risk_per_trade=risk_per_trade
-        )
+        # Initialize backtest engine with config dict
+        config = {
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'initial_capital': initial_capital,
+            'leverage': leverage,
+            'risk_per_trade': risk_per_trade
+        }
+        self.engine = VWAPBacktestEngine(config)
 
         # Apply relaxed parameters if provided
         if self.relaxed_params:
@@ -198,18 +199,15 @@ class VWAPMLBacktest:
         Returns:
             Period results dictionary
         """
-        # Convert to timestamps
-        start_ts = int(start_date.timestamp() * 1000)
-        end_ts = int(end_date.timestamp() * 1000)
-
         # Initialize new engine instance for this period
-        period_engine = VWAPBacktestEngine(
-            symbol=self.symbol,
-            timeframe=self.timeframe,
-            initial_capital=self.initial_capital,
-            leverage=self.leverage,
-            risk_per_trade=self.risk_per_trade
-        )
+        period_config = {
+            'symbol': self.symbol,
+            'timeframe': self.timeframe,
+            'initial_capital': self.initial_capital,
+            'leverage': self.leverage,
+            'risk_per_trade': self.risk_per_trade
+        }
+        period_engine = VWAPBacktestEngine(period_config)
 
         # Apply relaxed parameters
         if self.relaxed_params:
@@ -217,13 +215,8 @@ class VWAPMLBacktest:
                 if hasattr(period_engine, key):
                     setattr(period_engine, key, value)
 
-        # Run the backtest
-        results = await period_engine.run(
-            start_time=start_ts,
-            end_time=end_ts,
-            ml_optimizer=self.ml_optimizer if use_ml else None,
-            train_mode=train_mode
-        )
+        # Run the backtest (VWAPBacktestEngine expects datetime objects)
+        results = await period_engine.run(start_date, end_date)
 
         # Collect signals and outcomes for ML training
         if hasattr(period_engine, 'executed_signals'):
@@ -343,7 +336,7 @@ async def main():
     parser.add_argument('--days', type=int, default=30, help='Number of days to backtest')
     parser.add_argument('--capital', type=float, default=100.0, help='Initial capital')
     parser.add_argument('--leverage', type=int, default=20, help='Leverage')
-    parser.add_argument('--min-win-prob', type=float, default=0.60, help='Minimum win probability (0.60 = 60%)')
+    parser.add_argument('--min-win-prob', type=float, default=0.60, help='Minimum win probability (default: 0.60)')
     parser.add_argument('--walk-window', type=int, default=7, help='Walk-forward training window (days)')
     parser.add_argument('--retrain-interval', type=int, default=3, help='Retrain interval (days)')
 
