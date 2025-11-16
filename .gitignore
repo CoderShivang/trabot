@@ -21,8 +21,8 @@ ENV/
 logs/
 *.log
 
-# Data files (except examples)
-data/
+# Data files (except examples) - only root data/ directory, not src/data/
+/data/
 !data/.gitkeep
 
 # Environment variables

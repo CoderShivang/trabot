@@ -9,6 +9,8 @@ class Config:
     scoring: Any = field(default_factory=dict)
     learning: Any = field(default_factory=dict)
     notifications: Any = field(default_factory=dict)
+    regime_detection: Any = field(default_factory=dict)
+    adaptive_exits: Any = field(default_factory=dict)
     api_key: str = os.getenv("BINANCE_API_KEY","")
     api_secret: str = os.getenv("BINANCE_API_SECRET","")
     discord_webhook_url: str = os.getenv("DISCORD_WEBHOOK_URL","")
@@ -25,14 +27,27 @@ class Config:
         cfg.scoring = data.get('scoring', {})
         cfg.learning = data.get('learning', {})
         cfg.notifications = data.get('notifications', {})
+        cfg.regime_detection = data.get('regime_detection', {})
+        cfg.adaptive_exits = data.get('adaptive_exits', {})
+
+        # Helper to convert nested dicts to objects
+        def dict_to_obj(d):
+            if isinstance(d, dict):
+                obj = type('Obj', (), {})()
+                for k, v in d.items():
+                    setattr(obj, k, dict_to_obj(v))
+                return obj
+            return d
+
         # For convenience, expose nested keys as attributes as well
-        class B: pass
-        cfg.trading = type('T', (), cfg.trading)()
-        cfg.clc_strategy = type('C', (), cfg.clc_strategy)()
-        cfg.risk = type('R', (), cfg.risk)()
-        cfg.scoring = type('S', (), cfg.scoring)()
-        cfg.learning = type('L', (), cfg.learning)()
-        cfg.notifications = type('N', (), cfg.notifications)()
+        cfg.trading = dict_to_obj(cfg.trading)
+        cfg.clc_strategy = dict_to_obj(cfg.clc_strategy)
+        cfg.risk = dict_to_obj(cfg.risk)
+        cfg.scoring = dict_to_obj(cfg.scoring)
+        cfg.learning = dict_to_obj(cfg.learning)
+        cfg.notifications = dict_to_obj(cfg.notifications)
+        cfg.regime_detection = dict_to_obj(cfg.regime_detection)
+        cfg.adaptive_exits = dict_to_obj(cfg.adaptive_exits)
         return cfg
 
 def load_config(config_path: str = 'config/bot_config.yaml') -> Config:

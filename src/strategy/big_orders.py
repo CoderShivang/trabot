@@ -55,9 +55,15 @@ class BigOrdersDetector:
                 self.limit_events[(symbol, p, 'ask')].append((snapshot['timestamp'], lvl.ask_volume, 'present'))
 
     def _min_usdt(self, symbol):
-        if symbol.startswith("BTC"):
-            return self.config.clc_strategy.big_orders.min_btc_order_usdt
-        return self.config.clc_strategy.big_orders.min_eth_order_usdt
+        big_orders_config = getattr(self.config.clc_strategy, 'big_orders', {})
+        if isinstance(big_orders_config, dict):
+            if symbol.startswith("BTC"):
+                return big_orders_config.get('min_btc_order_usdt', 50000)
+            return big_orders_config.get('min_eth_order_usdt', 30000)
+        else:
+            if symbol.startswith("BTC"):
+                return getattr(big_orders_config, 'min_btc_order_usdt', 50000)
+            return getattr(big_orders_config, 'min_eth_order_usdt', 30000)
 
     def analyze(self, symbol: str, orderbook, recent_trades: List[Dict]) -> Dict:
         self.update_trade_history(symbol, recent_trades)
@@ -94,7 +100,9 @@ class BigOrdersDetector:
         recent = list(self.trade_history[symbol])[-200:]
         sizes = [t['qty'] for t in recent]
         avg = sum(sizes)/len(sizes) if sizes else 0
-        threshold = avg * self.config.clc_strategy.big_orders.size_multiplier
+        big_orders_config = getattr(self.config.clc_strategy, 'big_orders', {})
+        size_multiplier = big_orders_config.get('size_multiplier', 5.0) if isinstance(big_orders_config, dict) else getattr(big_orders_config, 'size_multiplier', 5.0)
+        threshold = avg * size_multiplier
         results = []
         for t in recent[-100:]:
             if t['qty'] >= threshold and t['qty']*t['price'] >= self._min_usdt(symbol):
@@ -109,7 +117,9 @@ class BigOrdersDetector:
         if not ladder:
             return []
         avg_trade = sum(t['qty'] for t in list(self.trade_history[symbol])[-200:]) / (200 if len(self.trade_history[symbol])>=200 else max(1,len(self.trade_history[symbol])))
-        threshold = avg_trade * self.config.clc_strategy.big_orders.large_limit_multiplier if avg_trade>0 else 100
+        big_orders_config = getattr(self.config.clc_strategy, 'big_orders', {})
+        large_limit_multiplier = big_orders_config.get('large_limit_multiplier', 10.0) if isinstance(big_orders_config, dict) else getattr(big_orders_config, 'large_limit_multiplier', 10.0)
+        threshold = avg_trade * large_limit_multiplier if avg_trade>0 else 100
         results = []
         for lvl in ladder:
             if lvl.bid_volume >= threshold and lvl.bid_volume * lvl.price >= self._min_usdt(symbol):
@@ -132,7 +142,9 @@ class BigOrdersDetector:
             now = int(time.time()*1000)
             recent = [e for e in events if now - e[0] < 15000]
             # refills = many present events after being consumed (heuristic)
-            if len(recent) >= self.config.clc_strategy.big_orders.iceberg_refill_threshold:
+            big_orders_config = getattr(self.config.clc_strategy, 'big_orders', {})
+            iceberg_refill_threshold = big_orders_config.get('iceberg_refill_threshold', 3) if isinstance(big_orders_config, dict) else getattr(big_orders_config, 'iceberg_refill_threshold', 3)
+            if len(recent) >= iceberg_refill_threshold:
                 return BigOrder(symbol, side, price, 0, 0, now, 'iceberg', 0.8, f"Iceberg refills {len(recent)}")
         return None
 
@@ -150,7 +162,7 @@ class BigOrdersDetector:
                 if timestamps[i] - timestamps[i-1] < 5000:
                     windows += 1
             if windows >= 3:
-                logger.info(f"[SPOOF] {symbol} potential spoof at {price}")
+                logger.debug(f"[SPOOF] {symbol} potential spoof at {price}")
                 return True
         return False
 

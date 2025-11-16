@@ -61,11 +61,23 @@ class SRZone:
 class LocationDetector:
     """Enhanced location detector with multiple detection methods"""
 
-    def __init__(self, config, binance_client, feedback_system=None):
+    def __init__(self, config, binance_client, feedback_system=None, klines_cache=None):
         self.config = config
         self.client = binance_client
         self.feedback_system = feedback_system
         self.zone_cache = {}  # Cache for performance
+        self.klines_cache = klines_cache or {}  # Cached klines from backtest
+
+    async def _get_klines(self, symbol: str, interval: str, limit: int):
+        """Get klines from cache if available (backtest), otherwise fetch from API (live)"""
+        # Check cache first (backtest mode)
+        if symbol in self.klines_cache and interval in self.klines_cache[symbol]:
+            cached = self.klines_cache[symbol][interval]
+            # Return last N candles from cache
+            return cached[-limit:] if len(cached) > limit else cached
+
+        # Fallback to API (live mode)
+        return await self.client.get_klines(symbol, interval, limit)
 
     async def get_all_locations(self, symbol: str, current_price: float) -> Dict:
         """
@@ -78,52 +90,109 @@ class LocationDetector:
         - location_score: Score for CLC engine (0-100)
         """
 
+        # Check cache (S/R zones don't change every candle, cache for performance)
+        import time
+        cache_key = symbol
+        current_time = time.time()
+
+        if cache_key in self.zone_cache:
+            cached_data, cached_time = self.zone_cache[cache_key]
+            # Cache S/R zones for 5 minutes (zones don't change much in 5min)
+            if current_time - cached_time < 300:  # 5 minutes = 300 seconds
+                # Still use cached zones, just update proximity check for current price
+                cached_zones = cached_data['consolidated_zones']
+                at_location, best_zone, location_score = self._check_at_location(
+                    cached_zones, current_price
+                )
+
+                # Use cached MTF zones (no need to recalculate)
+                mtf_zones = cached_data.get('mtf_zones', {'5m': [], '15m': []})
+
+                return {
+                    'all_zones': cached_zones,
+                    'at_location': at_location,
+                    'best_zone': best_zone,
+                    'location_score': location_score,
+                    'vwap_15m': cached_data.get('vwap_15m'),
+                    'ema_levels': cached_data.get('ema_levels', {}),
+                    'sr_zones': cached_zones,
+                    'mtf_sr_zones': mtf_zones
+                }
+
         all_zones = []
 
         # Method 1: Frequency-based (swing highs/lows)
+        logger.info(f"[LOCATION] Starting Method 1: Frequency-based detection for {symbol}")
         freq_zones = await self._detect_frequency_based(symbol)
+        logger.info(f"[LOCATION] Method 1 complete: {len(freq_zones)} frequency zones detected")
         all_zones.extend(freq_zones)
 
         # Method 2: Volume Profile (high volume nodes)
+        logger.info(f"[LOCATION] Starting Method 2: Volume Profile detection for {symbol}")
         volume_zones = await self._detect_volume_profile(symbol)
+        logger.info(f"[LOCATION] Method 2 complete: {len(volume_zones)} volume zones detected")
         all_zones.extend(volume_zones)
 
         # Method 3: Liquidity Heatmap (stop clusters)
+        logger.info(f"[LOCATION] Starting Method 3: Liquidity Heatmap detection for {symbol}")
         liquidity_zones = await self._detect_liquidity_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 3 complete: {len(liquidity_zones)} liquidity zones detected")
         all_zones.extend(liquidity_zones)
 
         # Method 4: Fibonacci retracements
+        logger.info(f"[LOCATION] Starting Method 4: Fibonacci detection for {symbol}")
         fib_zones = await self._detect_fibonacci_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 4 complete: {len(fib_zones)} fibonacci zones detected")
         all_zones.extend(fib_zones)
 
         # Method 5: Psychological levels (round numbers)
+        logger.info(f"[LOCATION] Starting Method 5: Psychological levels detection for {symbol}")
         psych_zones = self._detect_psychological_levels(symbol, current_price)
+        logger.info(f"[LOCATION] Method 5 complete: {len(psych_zones)} psychological zones detected")
         all_zones.extend(psych_zones)
 
         # Method 6: Manual zones (human-marked)
+        logger.info(f"[LOCATION] Starting Method 6: Manual zones detection for {symbol}")
         manual_zones = self._get_manual_zones(symbol, current_price)
+        logger.info(f"[LOCATION] Method 6 complete: {len(manual_zones)} manual zones detected")
         all_zones.extend(manual_zones)
 
         # Consolidate overlapping zones
+        logger.info(f"[LOCATION] Starting zone consolidation for {symbol}")
         consolidated = self._consolidate_zones(all_zones, current_price)
+        logger.info(f"[LOCATION] Zone consolidation complete: {len(consolidated)} consolidated zones")
 
         # Score by confluence (how many methods detected it)
+        logger.info(f"[LOCATION] Starting confluence scoring for {symbol}")
         scored_zones = self._score_zones_by_confluence(consolidated)
+        logger.info(f"[LOCATION] Confluence scoring complete")
 
         # Apply human feedback weights
+        logger.info(f"[LOCATION] Applying human feedback weights for {symbol}")
         final_zones = self._apply_human_feedback_weights(scored_zones, symbol)
+        logger.info(f"[LOCATION] Human feedback weights applied")
 
         # Check if current price is at a zone
+        logger.info(f"[LOCATION] Checking if price ${current_price:.2f} is at a zone")
         at_location, best_zone, location_score = self._check_at_location(
             final_zones, current_price
         )
+        logger.info(f"[LOCATION] Location check complete: at_location={at_location}, score={location_score:.1f}")
 
         # Also get VWAP and EMA levels for additional context
-        klines = await self.client.get_klines(symbol, '15m', 200)
+        logger.info(f"[LOCATION] Fetching 15m klines for VWAP/EMA calculation")
+        klines = await self._get_klines(symbol, '15m', 200)
+        logger.info(f"[LOCATION] Calculating VWAP and EMA levels")
         vwap_data = self._calculate_vwap_levels(klines) if klines else {}
         ema_data = self._calculate_ema_levels(klines) if klines else {}
+        logger.info(f"[LOCATION] VWAP/EMA calculation complete")
 
-        return {
+        # Get multi-timeframe S/R zones (5min and 15min)
+        logger.info(f"[LOCATION] Detecting multi-timeframe S/R zones for {symbol}")
+        mtf_zones = await self._detect_mtf_sr_zones(symbol, current_price)
+        logger.info(f"[LOCATION] Multi-timeframe S/R detection complete")
+
+        result = {
             'all_zones': final_zones,
             'at_location': at_location,
             'best_zone': best_zone,
@@ -131,13 +200,25 @@ class LocationDetector:
             'vwap_15m': vwap_data.get('vwap'),
             'vwap_bands': vwap_data.get('bands'),
             'emas_15m': ema_data,
-            'sr_zones': final_zones  # For backward compatibility
+            'sr_zones': final_zones,  # For backward compatibility
+            'mtf_sr_zones': mtf_zones  # 5min and 15min S/R zones for mean reversion
         }
+
+        # Cache the results (zones are expensive to compute, cache for 5 minutes)
+        cache_data = {
+            'consolidated_zones': final_zones,
+            'vwap_15m': vwap_data.get('vwap'),
+            'ema_levels': ema_data,
+            'mtf_zones': mtf_zones  # Cache MTF zones to avoid expensive recalculation
+        }
+        self.zone_cache[cache_key] = (cache_data, current_time)
+
+        return result
 
     async def _detect_frequency_based(self, symbol: str) -> List[SRZone]:
         """Method 1: Detect S/R from swing highs/lows"""
 
-        klines = await self.client.get_klines(symbol, '15m', 500)
+        klines = await self._get_klines(symbol, '15m', 500)
         if not klines:
             return []
 
@@ -178,7 +259,7 @@ class LocationDetector:
     async def _detect_volume_profile(self, symbol: str) -> List[SRZone]:
         """Method 2: Detect S/R from volume profile (POC, high volume nodes)"""
 
-        klines = await self.client.get_klines(symbol, '15m', 200)
+        klines = await self._get_klines(symbol, '15m', 200)
         if not klines:
             return []
 
@@ -230,7 +311,7 @@ class LocationDetector:
     async def _detect_liquidity_levels(self, symbol: str, current_price: float) -> List[SRZone]:
         """Method 3: Detect where stop-loss clusters likely are (liquidity pools)"""
 
-        klines = await self.client.get_klines(symbol, '15m', 100)
+        klines = await self._get_klines(symbol, '15m', 100)
         if not klines:
             return []
 
@@ -281,7 +362,7 @@ class LocationDetector:
     async def _detect_fibonacci_levels(self, symbol: str, current_price: float) -> List[SRZone]:
         """Method 4: Calculate Fibonacci retracement levels from recent swing"""
 
-        klines = await self.client.get_klines(symbol, '1h', 100)
+        klines = await self._get_klines(symbol, '1h', 100)
         if not klines:
             return []
 
@@ -569,7 +650,7 @@ class LocationDetector:
     ) -> tuple[bool, Optional[SRZone], float]:
         """Check if current price is at a zone and calculate location score"""
 
-        max_distance_pct = self.config.clc_strategy.location.get('max_distance_from_level_pct', 0.005)
+        max_distance_pct = getattr(self.config.clc_strategy.location, 'max_distance_from_level_pct', 0.005)
 
         at_location = False
         best_zone = None
@@ -588,11 +669,102 @@ class LocationDetector:
                 # Score based on zone strength (max 40 points)
                 location_score = 40 * (zone.strength / 10.0)
 
-                logger.info(f"[LOCATION] At zone: ${zone.level:.2f} ({zone.zone_type}), "
-                           f"strength {zone.strength:.1f}/10, methods: {[m.value for m in zone.methods]}")
+                logger.debug(f"[LOCATION] At zone: ${zone.level:.2f} ({zone.zone_type}), "
+                            f"strength {zone.strength:.1f}/10, methods: {[m.value for m in zone.methods]}")
                 break
 
         return at_location, best_zone, location_score
+
+    async def _detect_mtf_sr_zones(self, symbol: str, current_price: float) -> Dict:
+        """Detect S/R zones on 5min and 15min timeframes for mean reversion entries"""
+
+        mtf_zones = {
+            '5m': [],
+            '15m': []
+        }
+
+        if not self.config.clc_strategy.location.use_5min_sr and not self.config.clc_strategy.location.use_15min_sr:
+            return mtf_zones
+
+        lookback = self.config.clc_strategy.location.mtf_sr_lookback
+        min_touches = self.config.clc_strategy.location.mtf_sr_min_touches
+
+        # Detect 5min S/R zones
+        if self.config.clc_strategy.location.use_5min_sr:
+            klines_5m = await self._get_klines(symbol, '5m', lookback)
+            if klines_5m:
+                zones_5m = self._detect_sr_from_klines(klines_5m, min_touches, timeframe='5m')
+                mtf_zones['5m'] = zones_5m
+
+        # Detect 15min S/R zones
+        if self.config.clc_strategy.location.use_15min_sr:
+            klines_15m = await self._get_klines(symbol, '15m', lookback)
+            if klines_15m:
+                zones_15m = self._detect_sr_from_klines(klines_15m, min_touches, timeframe='15m')
+                mtf_zones['15m'] = zones_15m
+
+        return mtf_zones
+
+    def _detect_sr_from_klines(self, klines, min_touches: int, timeframe: str) -> List[SRZone]:
+        """Detect S/R zones from kline data (swing highs/lows with min touches)"""
+
+        df = self._klines_to_df(klines)
+        zones = []
+        window = 10  # Smaller window for faster timeframes
+
+        # Track touches for each level
+        level_touches = {}
+
+        # Find swing highs (resistance)
+        for i in range(window, len(df) - window):
+            if df['high'].iloc[i] == max(df['high'].iloc[i-window:i+window+1]):
+                level = float(df['high'].iloc[i])
+                level_key = round(level / 10) * 10  # Cluster nearby levels
+
+                if level_key not in level_touches:
+                    level_touches[level_key] = {'resistance': 0, 'support': 0, 'prices': []}
+
+                level_touches[level_key]['resistance'] += 1
+                level_touches[level_key]['prices'].append(level)
+
+        # Find swing lows (support)
+        for i in range(window, len(df) - window):
+            if df['low'].iloc[i] == min(df['low'].iloc[i-window:i+window+1]):
+                level = float(df['low'].iloc[i])
+                level_key = round(level / 10) * 10
+
+                if level_key not in level_touches:
+                    level_touches[level_key] = {'resistance': 0, 'support': 0, 'prices': []}
+
+                level_touches[level_key]['support'] += 1
+                level_touches[level_key]['prices'].append(level)
+
+        # Create zones from levels with min touches
+        for level_key, data in level_touches.items():
+            total_touches = data['resistance'] + data['support']
+
+            if total_touches >= min_touches:
+                avg_level = sum(data['prices']) / len(data['prices'])
+
+                # Determine zone type
+                if data['resistance'] > data['support']:
+                    zone_type = 'resistance'
+                elif data['support'] > data['resistance']:
+                    zone_type = 'support'
+                else:
+                    zone_type = 'both'
+
+                zones.append(SRZone(
+                    level=avg_level,
+                    zone_type=zone_type,
+                    strength=min(total_touches, 10),  # Cap at 10
+                    methods=[SRDetectionMethod.FREQUENCY],
+                    upper_bound=avg_level * 1.002,
+                    lower_bound=avg_level * 0.998,
+                    touches=total_touches
+                ))
+
+        return zones
 
     def _calculate_vwap_levels(self, klines) -> Dict:
         """Calculate VWAP and bands for additional context"""

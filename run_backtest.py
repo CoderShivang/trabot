@@ -121,31 +121,58 @@ async def main():
     logger.info(f"Total Fees: ${metrics.total_fees:.2f}")
     logger.info("=" * 80)
 
+    # Per-trade analysis
+    if engine.closed_trades:
+        logger.info("\n" + "=" * 80)
+        logger.info("PER-TRADE ANALYSIS")
+        logger.info("=" * 80)
+
+        for idx, trade in enumerate(engine.closed_trades, 1):
+            entry_time = datetime.fromtimestamp(trade['entry_time'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')
+            exit_time = datetime.fromtimestamp(trade['exit_time'] / 1000, tz=timezone.utc).strftime('%Y-%m-%d %H:%M')
+            duration_mins = (trade['exit_time'] - trade['entry_time']) / 60000
+
+            pnl = trade['pnl']
+            pnl_symbol = "WIN" if pnl > 0 else "LOSS"
+            pnl_color = "+" if pnl > 0 else ""
+
+            logger.info(f"\nTrade #{idx} [{pnl_symbol} {trade['direction']}]")
+            logger.info(f"  Entry: {entry_time} @ ${trade['entry_price']:.2f}")
+            logger.info(f"  Exit:  {exit_time} @ ${trade['exit_price']:.2f} ({trade['exit_reason']})")
+            logger.info(f"  P&L:   {pnl_color}${pnl:.2f} ({pnl_color}{trade['pnl_pct']:.2f}%)")
+            logger.info(f"  Duration: {duration_mins:.1f} minutes")
+
+            # Extract entry score from clc_score if available
+            if 'clc_score' in trade and hasattr(trade['clc_score'], 'total_score'):
+                logger.info(f"  Score: {trade['clc_score'].total_score:.1f}")
+
+        logger.info("\n" + "=" * 80)
+
     # Recommendations
     logger.info("\n" + "=" * 80)
     logger.info("RECOMMENDATIONS")
     logger.info("=" * 80)
 
     if metrics.win_rate < 45:
-        logger.warning("⚠️  Win rate below 45% - Consider increasing entry score threshold")
+        logger.warning("[!] Win rate below 45% - Consider increasing entry score threshold")
 
     if metrics.profit_factor < 1.5:
-        logger.warning("⚠️  Profit factor below 1.5 - Strategy may not be profitable long-term")
+        logger.warning("[!] Profit factor below 1.5 - Strategy may not be profitable long-term")
 
     if metrics.max_drawdown_pct > 30:
-        logger.warning("⚠️  Max drawdown > 30% - Reduce position size or tighten stops")
+        logger.warning("[!] Max drawdown > 30% - Reduce position size or tighten stops")
 
     if metrics.trades_per_day < 1:
-        logger.info("ℹ️  Low trade frequency - Consider lowering entry threshold slightly")
+        logger.info("[i] Low trade frequency - Consider lowering entry threshold slightly")
 
     if metrics.trades_per_day > 10:
-        logger.warning("⚠️  High trade frequency - May be overtrading, consider higher threshold")
+        logger.warning("[!] High trade frequency - May be overtrading, consider higher threshold")
 
     if metrics.sharpe_ratio > 1.5:
-        logger.info("✓ Excellent risk-adjusted returns (Sharpe > 1.5)")
+        logger.info("[+] Excellent risk-adjusted returns (Sharpe > 1.5)")
 
     if metrics.win_rate >= 50 and metrics.profit_factor >= 1.5:
-        logger.info("✓ Strategy shows positive expectancy - Ready for paper trading")
+        logger.info("[+] Strategy shows positive expectancy - Ready for paper trading")
 
     logger.info("=" * 80)
 
