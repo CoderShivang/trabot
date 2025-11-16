@@ -1,8 +1,9 @@
 """
 Run 180-day backtest for ML training data generation
 
-Period: May 19 - Nov 15, 2025 (180 days)
+Period: Feb 18 - Aug 17, 2025 (180 days)
 Purpose: Generate training data for ML model
+NO OVERLAP with 90d testing period (Aug 17 - Nov 15)
 """
 
 import asyncio
@@ -16,10 +17,13 @@ logger = logging.getLogger(__name__)
 
 async def main():
     logger.info("="*80)
-    logger.info("180-DAY TRAINING BACKTEST")
+    logger.info("180-DAY TRAINING BACKTEST (OUT-OF-SAMPLE)")
     logger.info("="*80)
     logger.info("")
-    logger.info("Period: May 19 - Nov 15, 2025 (180 days)")
+    logger.info("Period: Feb 18 - Aug 17, 2025 (180 days)")
+    logger.info("Testing Period: Aug 17 - Nov 15, 2025 (90 days)")
+    logger.info("NO OVERLAP - Prevents look-ahead bias")
+    logger.info("")
     logger.info("Purpose: Generate ML training data")
     logger.info("Position Sizing: Full compounding with dynamic leverage")
     logger.info("  - $100-$199: 20x leverage")
@@ -38,9 +42,9 @@ async def main():
 
     engine = VWAPBacktestEngine(config)
 
-    # 180-day period for training
-    start = datetime(2025, 5, 19, tzinfo=timezone.utc)
-    end = datetime(2025, 11, 15, tzinfo=timezone.utc)
+    # 180-day period for training (NO overlap with testing period)
+    start = datetime(2025, 2, 18, tzinfo=timezone.utc)
+    end = datetime(2025, 8, 17, tzinfo=timezone.utc)
 
     logger.info("="*80)
     logger.info("RUNNING BACKTEST...")
