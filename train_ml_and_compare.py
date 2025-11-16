@@ -60,14 +60,18 @@ async def main():
     # Sort by trade count (descending)
     file_info.sort(key=lambda x: x['trade_count'], reverse=True)
 
-    # 180d has more trades, 90d has fewer
+    # 180d has more trades (use auto-detected)
     training_file = file_info[0]['path']
-    baseline_file = file_info[1]['path']
 
-    logger.info(f"Detected 180d training: {training_file.name} ({file_info[0]['trade_count']} trades)")
-    logger.info(f"Detected 90d baseline: {baseline_file.name} ({file_info[1]['trade_count']} trades)")
+    # Use specific 90d baseline file as requested
+    baseline_file = Path('data/vwap_backtest/vwap_backtest_BTCUSDT_1763249383.json')
 
-    logger.info(f"Using 180d training: {training_file.name}")
+    if not baseline_file.exists():
+        logger.error(f"Baseline file not found: {baseline_file}")
+        logger.error("Using auto-detected file instead...")
+        baseline_file = file_info[1]['path']
+
+    logger.info(f"Using 180d training: {training_file.name} ({file_info[0]['trade_count']} trades)")
     logger.info(f"Using 90d baseline: {baseline_file.name}")
     logger.info("")
 
