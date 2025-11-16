@@ -535,16 +535,9 @@ class VWAPMLBacktestEngine:
 
         stop_distance = abs(signal.entry_price - signal.stop_loss)
 
-        # MINIMUM STOP DISTANCE: 0.1% of entry price to prevent unrealistic position sizes
-        min_stop_distance = signal.entry_price * 0.001  # 0.1%
-
         if stop_distance == 0:
             logger.warning("[RISK] Stop distance is zero, skipping trade")
             return
-
-        if stop_distance < min_stop_distance:
-            logger.warning(f"[RISK] Stop too tight (${stop_distance:.2f} < ${min_stop_distance:.2f}), skipping trade")
-            return  # Skip trades with stops that are too tight
 
         risk_amount = position_base * self.risk_per_trade
 
