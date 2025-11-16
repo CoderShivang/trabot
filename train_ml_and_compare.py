@@ -28,40 +28,44 @@ async def main():
     logger.info("="*80)
     logger.info("")
 
-    # Find most recent 180d training results
+    # Find most recent backtest files by number of trades
     results_dir = Path('data/vwap_backtest')
-    training_files = sorted(results_dir.glob('vwap_backtest_*.json'),
+    backtest_files = sorted(results_dir.glob('vwap_backtest_*.json'),
                            key=lambda x: x.stat().st_mtime, reverse=True)
 
-    # Find training file (180 days, Feb-Aug period)
-    training_file = None
-    baseline_file = None
-
-    for f in training_files:
-        with open(f) as file:
-            data = json.load(file)
-            trades = data.get('trades', [])
-            if trades:
-                first_trade_time = datetime.fromtimestamp(trades[0]['entry_time']/1000, tz=timezone.utc)
-                # Training period starts in Feb 2025
-                if first_trade_time.year == 2025 and first_trade_time.month == 2:
-                    training_file = f
-                # Baseline period starts in Aug 2025
-                elif first_trade_time.year == 2025 and first_trade_time.month == 8:
-                    baseline_file = f
-
-        if training_file and baseline_file:
-            break
-
-    if not training_file:
-        logger.error("180d training backtest not found!")
-        logger.error("Please run: python run_parallel_backtests.py first")
+    if len(backtest_files) < 2:
+        logger.error("Need at least 2 backtest files (180d training + 90d baseline)")
+        logger.error("Please run both backtests first")
         return
 
-    if not baseline_file:
-        logger.error("90d baseline backtest not found!")
-        logger.error("Please run: python run_parallel_backtests.py first")
+    # Load files and sort by trade count (180d will have more trades than 90d)
+    file_info = []
+    for f in backtest_files[:5]:  # Check last 5 files
+        try:
+            with open(f) as file:
+                data = json.load(file)
+                trades = data.get('trades', [])
+                file_info.append({
+                    'path': f,
+                    'trade_count': len(trades),
+                    'data': data
+                })
+        except:
+            continue
+
+    if len(file_info) < 2:
+        logger.error("Could not load backtest files")
         return
+
+    # Sort by trade count (descending)
+    file_info.sort(key=lambda x: x['trade_count'], reverse=True)
+
+    # 180d has more trades, 90d has fewer
+    training_file = file_info[0]['path']
+    baseline_file = file_info[1]['path']
+
+    logger.info(f"Detected 180d training: {training_file.name} ({file_info[0]['trade_count']} trades)")
+    logger.info(f"Detected 90d baseline: {baseline_file.name} ({file_info[1]['trade_count']} trades)")
 
     logger.info(f"Using 180d training: {training_file.name}")
     logger.info(f"Using 90d baseline: {baseline_file.name}")
