@@ -28,50 +28,20 @@ async def main():
     logger.info("="*80)
     logger.info("")
 
-    # Find most recent backtest files by number of trades
-    results_dir = Path('data/vwap_backtest')
-    backtest_files = sorted(results_dir.glob('vwap_backtest_*.json'),
-                           key=lambda x: x.stat().st_mtime, reverse=True)
-
-    if len(backtest_files) < 2:
-        logger.error("Need at least 2 backtest files (180d training + 90d baseline)")
-        logger.error("Please run both backtests first")
-        return
-
-    # Load files and sort by trade count (180d will have more trades than 90d)
-    file_info = []
-    for f in backtest_files[:5]:  # Check last 5 files
-        try:
-            with open(f) as file:
-                data = json.load(file)
-                trades = data.get('trades', [])
-                file_info.append({
-                    'path': f,
-                    'trade_count': len(trades),
-                    'data': data
-                })
-        except:
-            continue
-
-    if len(file_info) < 2:
-        logger.error("Could not load backtest files")
-        return
-
-    # Sort by trade count (descending)
-    file_info.sort(key=lambda x: x['trade_count'], reverse=True)
-
-    # 180d has more trades (use auto-detected)
-    training_file = file_info[0]['path']
-
-    # Use specific 90d baseline file as requested
+    # Use specific files as requested
+    training_file = Path('data/vwap_backtest/vwap_backtest_BTCUSDT_1763307457.json')
     baseline_file = Path('data/vwap_backtest/vwap_backtest_BTCUSDT_1763249383.json')
 
-    if not baseline_file.exists():
-        logger.error(f"Baseline file not found: {baseline_file}")
-        logger.error("Using auto-detected file instead...")
-        baseline_file = file_info[1]['path']
+    # Verify files exist
+    if not training_file.exists():
+        logger.error(f"180d training file not found: {training_file}")
+        return
 
-    logger.info(f"Using 180d training: {training_file.name} ({file_info[0]['trade_count']} trades)")
+    if not baseline_file.exists():
+        logger.error(f"90d baseline file not found: {baseline_file}")
+        return
+
+    logger.info(f"Using 180d training: {training_file.name}")
     logger.info(f"Using 90d baseline: {baseline_file.name}")
     logger.info("")
 
