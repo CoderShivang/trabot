@@ -1141,9 +1141,12 @@ class VWAPBacktestEngine:
         # Spread estimate (simplified)
         spread_bps = ((current_row['high'] - current_row['low']) / current_row['close']) * 10000
 
+        # Convert pandas Timestamp to milliseconds
+        timestamp_ms = int(current_row['timestamp'].timestamp() * 1000)
+
         return {
             'price': float(current_row['close']),
-            'timestamp': int(current_row['timestamp']),
+            'timestamp': timestamp_ms,
             'volatility': float(volatility),
             'volume_ratio': float(volume_ratio),
             'spread_bps': float(spread_bps)
