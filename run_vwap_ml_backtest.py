@@ -355,6 +355,11 @@ class VWAPMLBacktest:
         total_pnl = 0.0
         total_fees = 0.0
 
+        # ML filtering stats
+        total_signals_all_windows = 0
+        rejected_signals_all_windows = 0
+        approved_signals_all_windows = 0
+
         # For averaging
         window_win_rates = []
         window_ending_capitals = []
@@ -392,12 +397,23 @@ class VWAPMLBacktest:
             total_pnl += perf.get('total_pnl', 0)
             total_fees += perf.get('total_fees', 0)
 
+            # Accumulate ML stats
+            total_signals_all_windows += total_signals
+            rejected_signals_all_windows += rejected_signals
+            approved_signals_all_windows += approved_signals
+
             # Track for averages
             if trades > 0:  # Only include windows with trades
                 window_win_rates.append(win_rate)
                 window_ending_capitals.append(ending_capital)
                 window_max_drawdowns.append(abs(max_drawdown))
                 window_max_profits.append(largest_win)
+
+            # Extract ML stats
+            total_signals = perf.get('total_signals_generated', 0)
+            rejected_signals = perf.get('signals_rejected_by_ml', 0)
+            approved_signals = perf.get('signals_approved_by_ml', 0)
+            ml_filter_rate = perf.get('ml_filter_rate', 0)
 
             # Display window summary
             regime = wf_result.get('regime', 'UNKNOWN')
@@ -406,7 +422,11 @@ class VWAPMLBacktest:
             logger.info(f"   {'Ending Capital:':<25} ${ending_capital:.2f}")
             logger.info(f"   {'PnL:':<25} ${net_pnl:+.2f}")
             logger.info(f"   {'Win Rate:':<25} {win_rate:.1f}%")
-            logger.info(f"   {'Trades:':<25} {trades}")
+            logger.info(f"   {'Trades Executed:':<25} {trades}")
+            logger.info(f"   {'Total Signals:':<25} {total_signals}")
+            logger.info(f"   {'ML Rejected:':<25} {rejected_signals}")
+            logger.info(f"   {'ML Approved:':<25} {approved_signals}")
+            logger.info(f"   {'ML Filter Rate:':<25} {ml_filter_rate:.1f}%")
             logger.info(f"   {'Max Drawdown:':<25} ${max_drawdown:.2f}")
             logger.info(f"   {'Max Profit (Single):':<25} ${largest_win:.2f}")
 
@@ -422,30 +442,55 @@ class VWAPMLBacktest:
         avg_max_drawdown = sum(window_max_drawdowns) / len(window_max_drawdowns) if window_max_drawdowns else 0
         avg_max_profit = sum(window_max_profits) / len(window_max_profits) if window_max_profits else 0
 
+        # Calculate ML filter efficiency
+        overall_ml_filter_rate = (rejected_signals_all_windows / total_signals_all_windows * 100) if total_signals_all_windows > 0 else 0
+
         # Print aggregate summary
         logger.info("\n" + "="*100)
         logger.info("[AGGREGATE RESULTS (ALL WINDOWS)]")
         logger.info("="*100)
+
+        # Date range
+        if self.walk_forward_results:
+            first_window = self.walk_forward_results[0]
+            last_window = self.walk_forward_results[-1]
+            logger.info(f"\n{'Backtest Period:':<30} {first_window['start'].strftime('%d/%m/%Y')} to {last_window['end'].strftime('%d/%m/%Y')}")
+            logger.info(f"{'Total Duration:':<30} {(last_window['end'] - first_window['start']).days} days")
+            logger.info(f"{'Test Windows:':<30} {len(self.walk_forward_results)}")
+
         logger.info(f"\n{'METRIC':<30} {'VALUE':<30}")
         logger.info("-"*100)
+
+        # Capital & Returns
         logger.info(f"{'Starting Capital:':<30} ${self.initial_capital:.2f}")
         logger.info(f"{'Final Balance:':<30} ${final_balance:.2f}")
         logger.info(f"{'Net PnL:':<30} ${net_pnl:+.2f}")
         logger.info(f"{'Return:':<30} {return_pct:+.2f}%")
         logger.info("")
-        logger.info(f"{'Total Trades:':<30} {total_trades}")
+
+        # Trading Performance
+        logger.info(f"{'Total Trades Executed:':<30} {total_trades}")
         logger.info(f"{'Winning Trades:':<30} {total_wins}")
         logger.info(f"{'Losing Trades:':<30} {total_losses}")
         logger.info(f"{'Overall Win Rate:':<30} {win_rate_overall:.2f}%")
         logger.info("")
+
+        # ML Filtering Stats
+        logger.info("ML FILTERING PERFORMANCE:")
+        logger.info(f"{'Total Signals Generated:':<30} {total_signals_all_windows}")
+        logger.info(f"{'Signals Rejected by ML:':<30} {rejected_signals_all_windows}")
+        logger.info(f"{'Signals Approved by ML:':<30} {approved_signals_all_windows}")
+        logger.info(f"{'ML Filter Rate:':<30} {overall_ml_filter_rate:.1f}%")
+        logger.info(f"{'ML Training Samples:':<30} {len(self.all_signals)}")
+        logger.info("")
+
+        # Averages
         logger.info(f"{'Average Win Rate:':<30} {avg_win_rate:.2f}%")
         logger.info(f"{'Average Ending Capital:':<30} ${avg_ending_capital:.2f}")
         logger.info(f"{'Avg Max Drawdown:':<30} ${avg_max_drawdown:.2f}")
         logger.info(f"{'Avg Max Profit (Single):':<30} ${avg_max_profit:.2f}")
         logger.info("")
         logger.info(f"{'Total Fees Paid:':<30} ${total_fees:.2f}")
-        logger.info(f"{'ML Training Samples:':<30} {len(self.all_signals)}")
-        logger.info(f"{'Test Windows:':<30} {len(self.walk_forward_results)}")
 
         # Performance assessment
         logger.info("\n" + "="*100)

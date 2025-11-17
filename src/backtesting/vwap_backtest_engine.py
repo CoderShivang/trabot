@@ -104,6 +104,11 @@ class BacktestStats:
     mean_reversion_trades: int = 0
     trend_continuation_trades: int = 0
 
+    # ML Filtering stats
+    total_signals_generated: int = 0  # All signals before ML filter
+    signals_rejected_by_ml: int = 0   # Rejected by ML
+    signals_approved_by_ml: int = 0   # Approved by ML (net signals)
+
     # Day of week analysis
     trades_by_day: dict = field(default_factory=lambda: {
         'Monday': {'wins': 0, 'losses': 0, 'total_pnl': 0.0},
@@ -402,6 +407,9 @@ class VWAPBacktestEngine:
                         signal_dict = self._signal_to_dict(best_signal)
                         market_data = self._build_market_data(current_bar, hist_df)
 
+                        # Track total signals generated
+                        self.stats.total_signals_generated += 1
+
                         # ML FILTERING: Check if ML models approve this trade
                         should_take_trade = True
                         ml_win_prob = None
@@ -411,9 +419,14 @@ class VWAPBacktestEngine:
                             should_take_trade, ml_win_prob, ml_details = self.ml_optimizer.should_take_trade(signal_dict, market_data)
 
                             if not should_take_trade:
+                                self.stats.signals_rejected_by_ml += 1
                                 tqdm.write(f"  [ML FILTER] REJECTED - Win prob: {ml_win_prob:.1%} < {self.min_win_probability:.1%}")
                             else:
+                                self.stats.signals_approved_by_ml += 1
                                 tqdm.write(f"  [ML FILTER] APPROVED - Win prob: {ml_win_prob:.1%}")
+                        else:
+                            # No ML filtering - count as approved
+                            self.stats.signals_approved_by_ml += 1
 
                         if should_take_trade:
                             self._place_entry_order(best_signal, timestamp, market_data)
@@ -974,7 +987,12 @@ class VWAPBacktestEngine:
                 'largest_win': float(self.stats.largest_win),
                 'largest_loss': float(self.stats.largest_loss),
                 'avg_trade_duration_minutes': float(self.stats.avg_trade_duration),
-                'trades_by_day': self.stats.trades_by_day
+                'trades_by_day': self.stats.trades_by_day,
+                # ML Filtering stats
+                'total_signals_generated': self.stats.total_signals_generated,
+                'signals_rejected_by_ml': self.stats.signals_rejected_by_ml,
+                'signals_approved_by_ml': self.stats.signals_approved_by_ml,
+                'ml_filter_rate': (self.stats.signals_rejected_by_ml / self.stats.total_signals_generated * 100) if self.stats.total_signals_generated > 0 else 0.0
             },
             'order_stats': {
                 'entry_fills': self.stats.entry_fills,
