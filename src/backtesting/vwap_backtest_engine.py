@@ -389,7 +389,7 @@ class VWAPBacktestEngine:
                     if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
                         # Build market data for ML features (needed for both training and testing)
                         signal_dict = self._signal_to_dict(best_signal)
-                        market_data = self._build_market_data(row, hist_df)
+                        market_data = self._build_market_data(current_bar, hist_df)
 
                         # ML FILTERING: Check if ML models approve this trade
                         should_take_trade = True
