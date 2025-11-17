@@ -598,6 +598,13 @@ class VWAPBacktestEngine:
 
         pos_id = f"POS_{timestamp}_{entry_order.direction}"
 
+        # Transfer market_data from pending to position tracking
+        pending_key = f"pending_{entry_order.order_id.split('_')[1]}"  # Extract timestamp
+        if pending_key in self.order_signals:
+            # Move market_data to position-based key
+            self.order_signals[pos_id] = self.order_signals[pending_key]
+            del self.order_signals[pending_key]
+
         # Recalculate TP/SL based on ACTUAL filled price, not signal price
         # This ensures consistent risk/reward regardless of fill price
         if signal:
@@ -820,16 +827,15 @@ class VWAPBacktestEngine:
         self.closed_trades.append(position)
 
         # Track executed signal outcome for ML training
-        signal_key = f"pending_{position.order_id.split('_')[1]}"  # Extract timestamp from order_id
-        if signal_key in self.order_signals:
-            signal_info = self.order_signals[signal_key]
+        if position.position_id in self.order_signals:
+            signal_info = self.order_signals[position.position_id]
             self.executed_signals.append({
                 'signal': signal_info['signal'],
                 'market_data': signal_info['market_data'],
                 'pnl': net_pnl,
                 'outcome': 1 if net_pnl > 0 else 0
             })
-            del self.order_signals[signal_key]  # Clean up
+            del self.order_signals[position.position_id]  # Clean up
 
         # Log trade
         duration_mins = (timestamp - position.entry_time) / 1000 / 60
