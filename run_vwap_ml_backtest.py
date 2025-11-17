@@ -390,6 +390,12 @@ class VWAPMLBacktest:
             net_pnl = perf.get('net_pnl', 0)
             trades = perf.get('total_trades', 0)
 
+            # Extract ML stats (before using them!)
+            total_signals = perf.get('total_signals_generated', 0)
+            rejected_signals = perf.get('signals_rejected_by_ml', 0)
+            approved_signals = perf.get('signals_approved_by_ml', 0)
+            ml_filter_rate = perf.get('ml_filter_rate', 0)
+
             # Accumulate for totals
             total_trades += trades
             total_wins += perf.get('winning_trades', 0)
@@ -408,12 +414,6 @@ class VWAPMLBacktest:
                 window_ending_capitals.append(ending_capital)
                 window_max_drawdowns.append(abs(max_drawdown))
                 window_max_profits.append(largest_win)
-
-            # Extract ML stats
-            total_signals = perf.get('total_signals_generated', 0)
-            rejected_signals = perf.get('signals_rejected_by_ml', 0)
-            approved_signals = perf.get('signals_approved_by_ml', 0)
-            ml_filter_rate = perf.get('ml_filter_rate', 0)
 
             # Display window summary
             regime = wf_result.get('regime', 'UNKNOWN')
