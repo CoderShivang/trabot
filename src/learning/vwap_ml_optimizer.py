@@ -99,17 +99,26 @@ class VWAPMLOptimizer:
         """
         features = []
 
+        # Convert TradeSignal dataclass to dict if needed
+        if hasattr(signal, '__dataclass_fields__'):
+            # It's a dataclass, convert to dict
+            from dataclasses import asdict
+            signal_dict = asdict(signal)
+        else:
+            # It's already a dict
+            signal_dict = signal
+
         # VWAP features
-        vwap_state = signal.get('vwap_state', {})
-        features.append(signal.get('vwap_distance_pct', 0))
-        features.append(signal.get('vwap_band_distance', 0))
+        vwap_state = signal_dict.get('vwap_state', {})
+        features.append(signal_dict.get('vwap_distance_pct', 0))
+        features.append(signal_dict.get('vwap_band_distance', 0))
 
         # Calculate band position
         band_position = 0  # Default: at VWAP
-        if 'vwap_band' in signal:
+        if 'vwap_band' in signal_dict:
             price = market_data.get('price', 0)
-            vwap = vwap_state.get('vwap', price)
-            sigma = vwap_state.get('sigma', 0)
+            vwap = vwap_state.get('vwap', price) if vwap_state else price
+            sigma = vwap_state.get('sigma', 0) if vwap_state else 0
 
             if sigma > 0:
                 band_position = (price - vwap) / sigma
@@ -118,32 +127,32 @@ class VWAPMLOptimizer:
         features.append(band_position)
 
         # S/R zone features
-        sr_zone = signal.get('sr_zone', {})
-        features.append(sr_zone.get('strength', 0))
-        features.append(sr_zone.get('touches', 0))
-        features.append(signal.get('zone_distance_pct', 0))
+        sr_zone = signal_dict.get('sr_zone', {})
+        features.append(sr_zone.get('strength', 0) if sr_zone else 0)
+        features.append(sr_zone.get('touches', 0) if sr_zone else 0)
+        features.append(signal_dict.get('zone_distance_pct', 0))
 
         # Zone type encoding
-        zone_type = sr_zone.get('zone_type', 'both')
+        zone_type = sr_zone.get('zone_type', 'both') if sr_zone else 'both'
         zone_type_encoded = {'support': 0, 'resistance': 1, 'both': 2}.get(zone_type, 2)
         features.append(zone_type_encoded)
 
         # Market structure
-        price_structure = signal.get('price_structure', 'neutral')
+        price_structure = signal_dict.get('price_structure', 'neutral')
         structure_encoded = {'bearish': -1, 'neutral': 0, 'bullish': 1}.get(price_structure, 0)
         features.append(structure_encoded)
 
-        features.append(int(signal.get('htf_confluence', False)))
-        features.append(int(signal.get('local_sr_present', False)))
+        features.append(int(signal_dict.get('htf_confluence', False)))
+        features.append(int(signal_dict.get('local_sr_present', False)))
 
         # Signal features
-        signal_type = signal.get('signal_type', 'mean_reversion')
+        signal_type = signal_dict.get('signal_type', 'mean_reversion')
         signal_type_encoded = 0 if signal_type == 'mean_reversion' else 1
         features.append(signal_type_encoded)
 
-        features.append(signal.get('confidence', 50) / 100.0)  # Normalize to 0-1
+        features.append(signal_dict.get('confidence', 50) / 100.0)  # Normalize to 0-1
 
-        direction = signal.get('direction', 'LONG')
+        direction = signal_dict.get('direction', 'LONG')
         direction_encoded = 1 if direction == 'LONG' else -1
         features.append(direction_encoded)
 
@@ -159,9 +168,9 @@ class VWAPMLOptimizer:
         features.append(market_data.get('spread_bps', 0))
 
         # Additional context
-        features.append(int(signal.get('rapid_momentum', False)))
+        features.append(int(signal_dict.get('rapid_momentum', False)))
 
-        regime = signal.get('regime_filter', 'neutral')
+        regime = signal_dict.get('regime_filter', 'neutral')
         regime_encoded = {'bearish': -1, 'neutral': 0, 'bullish': 1}.get(regime, 0)
         features.append(regime_encoded)
 
