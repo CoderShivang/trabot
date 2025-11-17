@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
+import pandas as pd
 
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -94,6 +95,114 @@ class VWAPMLBacktest:
             if hasattr(self.engine, key):
                 setattr(self.engine, key, value)
                 logger.info(f"  Set {key} = {value}")
+
+    async def _fetch_all_data_once(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
+        """
+        Fetch all historical data once for the entire backtest period.
+        This avoids redundant API calls for each window.
+        """
+        from src.data.binance_client import BinanceClient
+        from config import Config
+
+        config = Config()
+        client = BinanceClient(config, backtest_mode=True)
+        await client.connect(skip_ping=True)
+
+        start_ms = int(start_date.timestamp() * 1000)
+        end_ms = int(end_date.timestamp() * 1000)
+
+        all_klines = []
+        timeframe_ms = self._timeframe_to_ms(self.timeframe)
+        current_start = start_ms
+
+        while current_start < end_ms:
+            chunk_end = min(current_start + (1000 * timeframe_ms), end_ms)
+
+            klines = await client.get_klines(
+                self.symbol,
+                self.timeframe,
+                start_time=current_start,
+                end_time=chunk_end
+            )
+
+            if not klines:
+                break
+
+            all_klines.extend(klines)
+
+            if klines:
+                current_start = klines[-1][0] + timeframe_ms
+            else:
+                break
+
+        # Convert to DataFrame
+        df = pd.DataFrame(all_klines, columns=[
+            'timestamp', 'open', 'high', 'low', 'close', 'volume',
+            'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+            'taker_buy_quote', 'ignore'
+        ])
+
+        # Convert types
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+
+        return df
+
+    def _timeframe_to_ms(self, timeframe: str) -> int:
+        """Convert timeframe string to milliseconds"""
+        unit = timeframe[-1]
+        value = int(timeframe[:-1])
+
+        if unit == 'm':
+            return value * 60 * 1000
+        elif unit == 'h':
+            return value * 60 * 60 * 1000
+        elif unit == 'd':
+            return value * 24 * 60 * 60 * 1000
+        else:
+            return 60 * 1000  # default to 1m
+
+    def _detect_regime_from_data(self, df: pd.DataFrame) -> str:
+        """
+        Detect market regime from DataFrame (avoiding redundant data fetch).
+
+        Args:
+            df: DataFrame with OHLCV data for the period
+        """
+        if df is None or len(df) < 10:
+            return "UNKNOWN"
+
+        try:
+            # Calculate metrics
+            first_price = df['close'].iloc[0]
+            last_price = df['close'].iloc[-1]
+            price_change_pct = ((last_price - first_price) / first_price) * 100
+
+            # Calculate trend strength (how directional vs choppy)
+            df_copy = df.copy()
+            df_copy['returns'] = df_copy['close'].pct_change()
+            trend_consistency = df_copy['returns'].mean() / (df_copy['returns'].std() + 1e-10)
+
+            # Regime classification
+            if abs(price_change_pct) < 5 and abs(trend_consistency) < 0.5:
+                regime = "SIDEWAYS"
+            elif price_change_pct > 5 and trend_consistency > 0.3:
+                regime = "BULLISH"
+            elif price_change_pct < -5 and trend_consistency < -0.3:
+                regime = "BEARISH"
+            elif price_change_pct > 0:
+                regime = "WEAK BULL"
+            elif price_change_pct < 0:
+                regime = "WEAK BEAR"
+            else:
+                regime = "NEUTRAL"
+
+            return f"{regime} ({price_change_pct:+.1f}%)"
+
+        except Exception as e:
+            logger.warning(f"[REGIME] Failed to detect regime: {e}")
+            return "UNKNOWN"
 
     async def _detect_regime(self, start_date: datetime, end_date: datetime) -> str:
         """
@@ -195,6 +304,11 @@ class VWAPMLBacktest:
         logger.info(f"Leverage: {self.leverage}x")
         logger.info("="*80)
 
+        # Fetch ALL data once to avoid redundant API calls
+        logger.info("\n[OPTIMIZATION] Fetching all data once for entire period...")
+        all_data_df = await self._fetch_all_data_once(start_date, end_date)
+        logger.info(f"[OK] Fetched {len(all_data_df):,} candles total\n")
+
         # Phase 1: Initial training period (collect data without trading)
         training_end = start_date + timedelta(days=self.walk_forward_window_days)
 
@@ -206,7 +320,8 @@ class VWAPMLBacktest:
         training_results = await self._run_period(
             start_date,
             training_end,
-            train_mode=True
+            train_mode=True,
+            pre_fetched_data=all_data_df
         )
 
         # Train initial ML models
@@ -231,8 +346,10 @@ class VWAPMLBacktest:
             test_start = current_date
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
 
-            # Detect regime for this window
-            regime = await self._detect_regime(test_start, test_end)
+            # Detect regime for this window using pre-fetched data
+            test_window_mask = (all_data_df['timestamp'] >= test_start) & (all_data_df['timestamp'] <= test_end)
+            test_window_df = all_data_df[test_window_mask]
+            regime = self._detect_regime_from_data(test_window_df)
 
             logger.info("="*80)
             logger.info(f"[TEST WINDOW #{test_period_num}]: {test_start.strftime('%d/%m/%y')} - {test_end.strftime('%d/%m/%y')}")
@@ -240,13 +357,14 @@ class VWAPMLBacktest:
             logger.info(f"   Status: Testing with ML filtering")
             logger.info("="*80)
 
-            # Run backtest with ML filtering
+            # Run backtest with ML filtering using pre-fetched data
             period_results = await self._run_period(
                 test_start,
                 test_end,
                 train_mode=False,
                 use_ml=True,
-                window_num=test_period_num
+                window_num=test_period_num,
+                pre_fetched_data=all_data_df
             )
 
             self.walk_forward_results.append({
@@ -293,7 +411,8 @@ class VWAPMLBacktest:
         end_date: datetime,
         train_mode: bool = False,
         use_ml: bool = False,
-        window_num: int = 0
+        window_num: int = 0,
+        pre_fetched_data: pd.DataFrame = None
     ):
         """
         Run backtest for a specific period.
@@ -303,6 +422,7 @@ class VWAPMLBacktest:
             end_date: Period end
             train_mode: If True, collect signals for training only (no trading)
             use_ml: If True, filter trades using ML
+            pre_fetched_data: Optional pre-fetched data to avoid redundant API calls
 
         Returns:
             Period results dictionary
@@ -328,8 +448,8 @@ class VWAPMLBacktest:
                 if hasattr(period_engine, key):
                     setattr(period_engine, key, value)
 
-        # Run the backtest (VWAPBacktestEngine expects datetime objects)
-        results = await period_engine.run(start_date, end_date)
+        # Run the backtest with pre-fetched data (if available)
+        results = await period_engine.run(start_date, end_date, pre_fetched_data=pre_fetched_data)
 
         # Collect signals and outcomes for ML training
         if hasattr(period_engine, 'executed_signals'):

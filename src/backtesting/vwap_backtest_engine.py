@@ -190,13 +190,14 @@ class VWAPBacktestEngine:
 
         return MinimalConfig(self.symbol)
 
-    async def run(self, start_date: datetime, end_date: datetime):
+    async def run(self, start_date: datetime, end_date: datetime, pre_fetched_data: pd.DataFrame = None):
         """
         Run backtest
 
         Args:
             start_date: Start date for backtest
             end_date: End date for backtest
+            pre_fetched_data: Optional pre-fetched OHLCV data to avoid redundant API calls
         """
         # Store dates for results metadata
         self.start_date = start_date
@@ -214,13 +215,20 @@ class VWAPBacktestEngine:
         logger.info(f"Maker Fee: {self.maker_fee*100:.3f}% (of notional)")
         logger.info(f"{'='*80}\n")
 
-        # Connect to Binance client
-        logger.info("[INIT] Connecting to Binance...")
-        await self.binance_client.connect()
+        # Use pre-fetched data if provided, otherwise fetch from Binance
+        if pre_fetched_data is not None:
+            logger.info("[DATA] Using pre-fetched data (avoiding redundant API call)...")
+            # Filter to the requested date range
+            mask = (pre_fetched_data['timestamp'] >= start_date) & (pre_fetched_data['timestamp'] <= end_date)
+            klines = self._convert_df_to_klines(pre_fetched_data[mask])
+        else:
+            # Connect to Binance client
+            logger.info("[INIT] Connecting to Binance...")
+            await self.binance_client.connect()
 
-        # Fetch historical data from Binance mainnet
-        logger.info("[DATA] Fetching historical data from Binance MAINNET...")
-        klines = await self._fetch_historical_data(start_date, end_date)
+            # Fetch historical data from Binance mainnet
+            logger.info("[DATA] Fetching historical data from Binance MAINNET...")
+            klines = await self._fetch_historical_data(start_date, end_date)
 
         if not klines or len(klines) < 100:
             logger.error("[ERROR] Insufficient data for backtest")
@@ -268,6 +276,28 @@ class VWAPBacktestEngine:
         logger.debug(f"[DATA] Saved OHLCV data to: {ohlcv_path}")
 
         return results  # Return results for walk-forward aggregation
+
+    def _convert_df_to_klines(self, df: pd.DataFrame) -> List:
+        """Convert DataFrame back to klines format for compatibility"""
+        klines = []
+        for _, row in df.iterrows():
+            # Convert to klines format: [timestamp, open, high, low, close, volume, ...]
+            kline = [
+                int(row['timestamp'].timestamp() * 1000),  # timestamp in ms
+                str(row['open']),
+                str(row['high']),
+                str(row['low']),
+                str(row['close']),
+                str(row['volume']),
+                0,  # close_time (not used)
+                0,  # quote_volume (not used)
+                0,  # trades (not used)
+                0,  # taker_buy_base (not used)
+                0,  # taker_buy_quote (not used)
+                0   # ignore
+            ]
+            klines.append(kline)
+        return klines
 
     async def _fetch_historical_data(self, start_date: datetime, end_date: datetime) -> List:
         """Fetch historical klines from Binance mainnet"""
