@@ -6,8 +6,8 @@ Websocket feed not implemented here (can be extended later).
 import asyncio
 from binance.client import Client
 from binance.exceptions import BinanceAPIException
-from data.orderbook import OrderBookDepth
-from utils.logger import setup_logger
+from src.data.orderbook import OrderBookDepth
+from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
 
