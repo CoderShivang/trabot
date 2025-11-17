@@ -253,6 +253,9 @@ class VWAPMLBacktest:
         all_data_df = await self._fetch_all_data_once(start_date, end_date)
         logger.info(f"[OK] Fetched {len(all_data_df):,} candles total\n")
 
+        # Store for dashboard
+        self.ohlcv_data = all_data_df
+
         # Phase 1: Initial training period (collect data without trading)
         training_end = start_date + timedelta(days=self.walk_forward_window_days)
 
@@ -652,6 +655,12 @@ class VWAPMLBacktest:
             json.dump(results, f, indent=2, default=default_serializer)
 
         logger.info(f"\n[SAVE] Results saved to: {filename}")
+
+        # Save OHLCV data for dashboard
+        if hasattr(self, 'ohlcv_data') and self.ohlcv_data is not None:
+            ohlcv_path = Path('data/vwap_ml_backtest') / 'ohlcv_data.parquet'
+            self.ohlcv_data.to_parquet(ohlcv_path, index=False)
+            logger.info(f"[SAVE] OHLCV data saved to: {ohlcv_path}")
 
 
 async def main():

@@ -20,29 +20,36 @@ sys.path.insert(0, str(Path(__file__).parent))
 from src.visualization.interactive_dashboard import InteractiveDashboard
 import pandas as pd
 
-# Find most recent backtest results
-results_dir = Path('data/vwap_backtest')
+# Find most recent backtest results (check both directories)
+vwap_dir = Path('data/vwap_backtest')
+ml_dir = Path('data/vwap_ml_backtest')
 
-if not results_dir.exists():
-    print("[ERROR] No backtest results found. Run a backtest first:")
-    print("  python run_vwap_backtest.py")
-    sys.exit(1)
+# Collect results from both directories
+results_files = []
+if vwap_dir.exists():
+    results_files.extend(list(vwap_dir.glob('backtest_*.json')))
+    results_files.extend(list(vwap_dir.glob('vwap_backtest_*.json')))
+if ml_dir.exists():
+    results_files.extend(list(ml_dir.glob('vwap_ml_*.json')))
 
-# Find most recent results file (support both old and new naming patterns)
-results_files = list(results_dir.glob('backtest_*.json')) + list(results_dir.glob('vwap_backtest_*.json'))
 if not results_files:
-    print("[ERROR] No backtest results found in data/vwap_backtest/")
-    print("Run a backtest first: python run_vwap_backtest.py")
+    print("[ERROR] No backtest results found in data/vwap_backtest/ or data/vwap_ml_backtest/")
+    print("Run a backtest first:")
+    print("  python run_vwap_backtest.py  (or)")
+    print("  python run_vwap_ml_backtest.py")
     sys.exit(1)
 
 # Get most recent file
 latest_results = max(results_files, key=lambda p: p.stat().st_mtime)
+results_dir = latest_results.parent
 print(f"[INFO] Loading backtest: {latest_results.name}")
+print(f"[INFO] From directory: {results_dir}")
 
-# Load OHLCV data
+# Load OHLCV data from the same directory
 ohlcv_path = results_dir / 'ohlcv_data.parquet'
 if not ohlcv_path.exists():
-    print("[ERROR] OHLCV data not found. Re-run the backtest to generate it.")
+    print(f"[ERROR] OHLCV data not found at: {ohlcv_path}")
+    print("Re-run the backtest to generate OHLCV data.")
     sys.exit(1)
 
 df = pd.read_parquet(ohlcv_path)
