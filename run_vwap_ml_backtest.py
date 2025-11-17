@@ -367,6 +367,12 @@ class VWAPMLBacktest:
             start_date = wf_result['start']
             end_date = wf_result['end']
             period_res = wf_result['results']
+
+            # Skip if no results (backtest failed or returned None)
+            if period_res is None:
+                logger.warning(f"\n[Window #{period_num}]: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')} - NO RESULTS")
+                continue
+
             perf = period_res.get('performance', {})
             config = period_res.get('backtest_config', {})
 

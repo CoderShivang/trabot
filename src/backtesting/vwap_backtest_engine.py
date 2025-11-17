@@ -219,7 +219,27 @@ class VWAPBacktestEngine:
 
         if not klines or len(klines) < 100:
             logger.error("[ERROR] Insufficient data for backtest")
-            return
+            # Return empty results dict instead of None
+            return {
+                'backtest_config': {
+                    'symbol': self.symbol,
+                    'timeframe': self.timeframe,
+                    'start_date': start_date.strftime('%Y-%m-%d'),
+                    'end_date': end_date.strftime('%Y-%m-%d'),
+                    'initial_capital': self.initial_capital,
+                    'final_capital': self.initial_capital,
+                    'error': 'Insufficient data'
+                },
+                'performance': {
+                    'total_trades': 0,
+                    'winning_trades': 0,
+                    'losing_trades': 0,
+                    'win_rate': 0.0,
+                    'total_pnl': 0.0,
+                    'net_pnl': 0.0,
+                    'total_fees': 0.0
+                }
+            }
 
         logger.info(f"[DATA] Loaded {len(klines)} candles\n")
 
@@ -231,27 +251,18 @@ class VWAPBacktestEngine:
 
         # Generate results
         self._calculate_stats()
-        results_path = self._save_results()
+        results = self._save_results()
         self._display_results()
 
         # Print trade summary
         self._print_trade_summary()
 
-        # Generate static HTML dashboard
-        logger.info("\n[DASHBOARD] Generating static HTML visualization...")
-        dashboard = VWAPDashboard(results_path, df)
-        dashboard_path = dashboard.generate()
-        logger.info(f"[DASHBOARD] Static HTML saved to: file://{Path(dashboard_path).absolute()}")
-
-        # Offer interactive dashboard
-        logger.info("\n[INTERACTIVE] To launch interactive dashboard with filtering, run:")
-        logger.info(f"  python -c \"from src.visualization.interactive_dashboard import InteractiveDashboard; import pandas as pd; InteractiveDashboard('{results_path}', pd.read_parquet('data/vwap_backtest/ohlcv_data.parquet')).run()\"")
-        logger.info("\nOr use the launch_interactive_dashboard.py script (see below)")
-
-        # Save OHLCV data for interactive dashboard
-        ohlcv_path = Path(results_path).parent / 'ohlcv_data.parquet'
+        # Save OHLCV data for dashboards (but skip dashboard generation for walk-forward windows)
+        ohlcv_path = Path('data/vwap_backtest') / 'ohlcv_data.parquet'
         df.to_parquet(ohlcv_path, index=False)
         logger.debug(f"[DATA] Saved OHLCV data to: {ohlcv_path}")
+
+        return results  # Return results for walk-forward aggregation
 
     async def _fetch_historical_data(self, start_date: datetime, end_date: datetime) -> List:
         """Fetch historical klines from Binance mainnet"""
@@ -983,7 +994,7 @@ class VWAPBacktestEngine:
         # Also save detailed CSV for trade analysis
         self._save_trades_csv(timestamp)
 
-        return str(results_file)
+        return results  # Return results dict for walk-forward analysis
 
     def _save_trades_csv(self, timestamp: int):
         """Save detailed trade log to CSV with IST timestamps"""
