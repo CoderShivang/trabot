@@ -132,7 +132,7 @@ class VWAPMLBacktest:
         training_end = start_date + timedelta(days=self.walk_forward_window_days)
 
         logger.info("\n" + "="*80)
-        logger.info(f"📚 TRAINING WINDOW: {start_date.strftime('%d/%m/%y')} - {training_end.strftime('%d/%m/%y')}")
+        logger.info(f"[TRAINING WINDOW]: {start_date.strftime('%d/%m/%y')} - {training_end.strftime('%d/%m/%y')}")
         logger.info(f"   Collecting signals for initial ML training (no trading)")
         logger.info("="*80)
 
@@ -144,15 +144,15 @@ class VWAPMLBacktest:
 
         # Train initial ML models
         if len(self.all_signals) >= 30:  # Minimum 30 signals for training
-            logger.info(f"\n✓ Training ML models on {len(self.all_signals)} signals...")
+            logger.info(f"\n[OK] Training ML models on {len(self.all_signals)} signals...")
             metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
-            logger.info(f"✓ Initial training complete\n")
+            logger.info(f"[OK] Initial training complete\n")
         else:
-            logger.warning(f"⚠ Insufficient signals ({len(self.all_signals)}/30), skipping ML\n")
+            logger.warning(f"[WARN] Insufficient signals ({len(self.all_signals)}/30), skipping ML\n")
 
         # Phase 2: Walk-forward testing with ML filtering
         logger.info("="*80)
-        logger.info("🔄 WALK-FORWARD TESTING PHASE")
+        logger.info("[WALK-FORWARD TESTING PHASE]")
         logger.info("="*80 + "\n")
 
         current_date = training_end
@@ -165,7 +165,7 @@ class VWAPMLBacktest:
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
 
             logger.info("="*80)
-            logger.info(f"📊 TEST WINDOW #{test_period_num}: {test_start.strftime('%d/%m/%y')} - {test_end.strftime('%d/%m/%y')}")
+            logger.info(f"[TEST WINDOW #{test_period_num}]: {test_start.strftime('%d/%m/%y')} - {test_end.strftime('%d/%m/%y')}")
             logger.info(f"   Status: Testing with ML filtering")
             logger.info("="*80)
 
@@ -189,20 +189,20 @@ class VWAPMLBacktest:
             if period_results:
                 perf = period_results.get('performance', {})
                 config = period_results.get('backtest_config', {})
-                logger.info(f"\n   💰 Window PnL: ${perf.get('net_pnl', 0):.2f}")
-                logger.info(f"   📈 Ending Capital: ${config.get('final_capital', 0):.2f}")
-                logger.info(f"   ✅ Win Rate: {perf.get('win_rate', 0):.1f}%")
+                logger.info(f"\n   Window PnL: ${perf.get('net_pnl', 0):.2f}")
+                logger.info(f"   Ending Capital: ${config.get('final_capital', 0):.2f}")
+                logger.info(f"   Win Rate: {perf.get('win_rate', 0):.1f}%")
                 logger.info("")
 
             # Retrain ML models if we have enough new data
             if len(self.all_signals) >= 50 and retrain_counter >= self.retrain_interval_days:
                 train_start_retrain = start_date
                 train_end_retrain = test_end
-                logger.info(f"🔄 Retraining ML models...")
+                logger.info(f"[RETRAIN] Retraining ML models...")
                 logger.info(f"   Training period: {train_start_retrain.strftime('%d/%m/%y')} - {train_end_retrain.strftime('%d/%m/%y')}")
                 logger.info(f"   Total signals: {len(self.all_signals)}")
                 metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
-                logger.info(f"   ✓ Retrain complete\n")
+                logger.info(f"   [OK] Retrain complete\n")
                 retrain_counter = 0
 
             current_date = test_end
@@ -268,7 +268,7 @@ class VWAPMLBacktest:
     def _aggregate_results(self):
         """Aggregate results from all walk-forward periods"""
         logger.info("\n" + "="*100)
-        logger.info("📋 INDIVIDUAL WINDOW RESULTS")
+        logger.info("[INDIVIDUAL WINDOW RESULTS]")
         logger.info("="*100)
 
         # Track aggregate metrics
@@ -317,7 +317,7 @@ class VWAPMLBacktest:
                 window_max_profits.append(largest_win)
 
             # Display window summary
-            logger.info(f"\n🪟 Window #{period_num}: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')}")
+            logger.info(f"\n[Window #{period_num}]: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')}")
             logger.info(f"   {'Starting Capital:':<25} ${starting_capital:.2f}")
             logger.info(f"   {'Ending Capital:':<25} ${ending_capital:.2f}")
             logger.info(f"   {'PnL:':<25} ${net_pnl:+.2f}")
@@ -340,7 +340,7 @@ class VWAPMLBacktest:
 
         # Print aggregate summary
         logger.info("\n" + "="*100)
-        logger.info("📊 AGGREGATE RESULTS (ALL WINDOWS)")
+        logger.info("[AGGREGATE RESULTS (ALL WINDOWS)]")
         logger.info("="*100)
         logger.info(f"\n{'METRIC':<30} {'VALUE':<30}")
         logger.info("-"*100)
@@ -365,17 +365,17 @@ class VWAPMLBacktest:
 
         # Performance assessment
         logger.info("\n" + "="*100)
-        logger.info("📈 PERFORMANCE ASSESSMENT")
+        logger.info("[PERFORMANCE ASSESSMENT]")
         logger.info("="*100)
         if win_rate_overall >= self.min_win_probability * 100:
-            logger.info(f"✅ TARGET ACHIEVED: {win_rate_overall:.2f}% >= {self.min_win_probability*100:.0f}%")
+            logger.info(f"[PASS] TARGET ACHIEVED: {win_rate_overall:.2f}% >= {self.min_win_probability*100:.0f}%")
         else:
-            logger.info(f"❌ TARGET MISSED: {win_rate_overall:.2f}% < {self.min_win_probability*100:.0f}%")
+            logger.info(f"[FAIL] TARGET MISSED: {win_rate_overall:.2f}% < {self.min_win_probability*100:.0f}%")
 
         if return_pct > 0:
-            logger.info(f"✅ PROFITABLE: {return_pct:+.2f}% return")
+            logger.info(f"[PASS] PROFITABLE: {return_pct:+.2f}% return")
         else:
-            logger.info(f"❌ UNPROFITABLE: {return_pct:+.2f}% return")
+            logger.info(f"[FAIL] UNPROFITABLE: {return_pct:+.2f}% return")
 
         logger.info("="*100)
 
