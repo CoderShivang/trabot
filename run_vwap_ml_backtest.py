@@ -285,10 +285,18 @@ class VWAPMLBacktest:
         logger.info("="*80 + "\n")
 
         current_date = training_end
-        retrain_counter = 0
         test_period_num = 1
 
         while current_date < end_date:
+            # Retrain ML models BEFORE each test window (using all accumulated data)
+            # Skip for first window (already trained on initial period)
+            if test_period_num > 1 and len(self.all_signals) >= 50:
+                logger.info(f"[RETRAIN] Retraining ML models before test window #{test_period_num}...")
+                logger.info(f"   Training period: {start_date.strftime('%d/%m/%y')} - {current_date.strftime('%d/%m/%y')}")
+                logger.info(f"   Total signals: {len(self.all_signals)}")
+                metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
+                logger.info(f"   [OK] Retrain complete - models updated with latest data\n")
+
             # Calculate test period
             test_start = current_date
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
@@ -331,19 +339,8 @@ class VWAPMLBacktest:
                 logger.info(f"   Win Rate: {perf.get('win_rate', 0):.1f}%")
                 logger.info("")
 
-            # Retrain ML models if we have enough new data
-            if len(self.all_signals) >= 50 and retrain_counter >= self.retrain_interval_days:
-                train_start_retrain = start_date
-                train_end_retrain = test_end
-                logger.info(f"[RETRAIN] Retraining ML models...")
-                logger.info(f"   Training period: {train_start_retrain.strftime('%d/%m/%y')} - {train_end_retrain.strftime('%d/%m/%y')}")
-                logger.info(f"   Total signals: {len(self.all_signals)}")
-                metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
-                logger.info(f"   [OK] Retrain complete\n")
-                retrain_counter = 0
-
+            # Move to next window
             current_date = test_end
-            retrain_counter += self.retrain_interval_days
             test_period_num += 1
 
         # Aggregate and report results
