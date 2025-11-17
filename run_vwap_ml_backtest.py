@@ -102,10 +102,21 @@ class VWAPMLBacktest:
         This avoids redundant API calls for each window.
         """
         from src.data.binance_client import BinanceClient
-        from config import Config
 
-        config = Config()
-        client = BinanceClient(config, backtest_mode=True)
+        # Create minimal config for BinanceClient (same approach as VWAPBacktestEngine)
+        class TradingConfig:
+            def __init__(self, symbols):
+                self.symbols = symbols
+                self.paper_trading = False
+
+        class MinimalConfig:
+            def __init__(self, symbol):
+                self.trading = TradingConfig([symbol])
+                self.api_key = ""
+                self.api_secret = ""
+
+        config = MinimalConfig(self.symbol)
+        client = BinanceClient(config)
         await client.connect(skip_ping=True)
 
         start_ms = int(start_date.timestamp() * 1000)
@@ -183,73 +194,6 @@ class VWAPMLBacktest:
             df_copy = df.copy()
             df_copy['returns'] = df_copy['close'].pct_change()
             trend_consistency = df_copy['returns'].mean() / (df_copy['returns'].std() + 1e-10)
-
-            # Regime classification
-            if abs(price_change_pct) < 5 and abs(trend_consistency) < 0.5:
-                regime = "SIDEWAYS"
-            elif price_change_pct > 5 and trend_consistency > 0.3:
-                regime = "BULLISH"
-            elif price_change_pct < -5 and trend_consistency < -0.3:
-                regime = "BEARISH"
-            elif price_change_pct > 0:
-                regime = "WEAK BULL"
-            elif price_change_pct < 0:
-                regime = "WEAK BEAR"
-            else:
-                regime = "NEUTRAL"
-
-            return f"{regime} ({price_change_pct:+.1f}%)"
-
-        except Exception as e:
-            logger.warning(f"[REGIME] Failed to detect regime: {e}")
-            return "UNKNOWN"
-
-    async def _detect_regime(self, start_date: datetime, end_date: datetime) -> str:
-        """
-        Detect market regime for a given period (bullish/bearish/sideways).
-
-        Uses price movement and trend strength to classify regime.
-        """
-        try:
-            # Fetch data for the period
-            from src.data.binance_client import BinanceClient
-            from config import Config
-
-            config = Config()
-            client = BinanceClient(config, backtest_mode=True)
-            await client.connect(skip_ping=True)
-
-            start_ms = int(start_date.timestamp() * 1000)
-            end_ms = int(end_date.timestamp() * 1000)
-
-            klines = await client.get_klines(
-                self.symbol,
-                self.timeframe,
-                start_time=start_ms,
-                end_time=end_ms,
-                limit=1000
-            )
-
-            if not klines or len(klines) < 10:
-                return "UNKNOWN"
-
-            # Convert to prices
-            import pandas as pd
-            df = pd.DataFrame(klines, columns=[
-                'timestamp', 'open', 'high', 'low', 'close', 'volume',
-                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
-                'taker_buy_quote', 'ignore'
-            ])
-            df['close'] = df['close'].astype(float)
-
-            # Calculate metrics
-            first_price = df['close'].iloc[0]
-            last_price = df['close'].iloc[-1]
-            price_change_pct = ((last_price - first_price) / first_price) * 100
-
-            # Calculate trend strength (how directional vs choppy)
-            df['returns'] = df['close'].pct_change()
-            trend_consistency = df['returns'].mean() / (df['returns'].std() + 1e-10)
 
             # Regime classification
             if abs(price_change_pct) < 5 and abs(trend_consistency) < 0.5:
