@@ -95,6 +95,73 @@ class VWAPMLBacktest:
                 setattr(self.engine, key, value)
                 logger.info(f"  Set {key} = {value}")
 
+    async def _detect_regime(self, start_date: datetime, end_date: datetime) -> str:
+        """
+        Detect market regime for a given period (bullish/bearish/sideways).
+
+        Uses price movement and trend strength to classify regime.
+        """
+        try:
+            # Fetch data for the period
+            from src.data.binance_client import BinanceClient
+            from config import Config
+
+            config = Config()
+            client = BinanceClient(config, backtest_mode=True)
+            await client.connect(skip_ping=True)
+
+            start_ms = int(start_date.timestamp() * 1000)
+            end_ms = int(end_date.timestamp() * 1000)
+
+            klines = await client.get_klines(
+                self.symbol,
+                self.timeframe,
+                start_time=start_ms,
+                end_time=end_ms,
+                limit=1000
+            )
+
+            if not klines or len(klines) < 10:
+                return "UNKNOWN"
+
+            # Convert to prices
+            import pandas as pd
+            df = pd.DataFrame(klines, columns=[
+                'timestamp', 'open', 'high', 'low', 'close', 'volume',
+                'close_time', 'quote_volume', 'trades', 'taker_buy_base',
+                'taker_buy_quote', 'ignore'
+            ])
+            df['close'] = df['close'].astype(float)
+
+            # Calculate metrics
+            first_price = df['close'].iloc[0]
+            last_price = df['close'].iloc[-1]
+            price_change_pct = ((last_price - first_price) / first_price) * 100
+
+            # Calculate trend strength (how directional vs choppy)
+            df['returns'] = df['close'].pct_change()
+            trend_consistency = df['returns'].mean() / (df['returns'].std() + 1e-10)
+
+            # Regime classification
+            if abs(price_change_pct) < 5 and abs(trend_consistency) < 0.5:
+                regime = "SIDEWAYS"
+            elif price_change_pct > 5 and trend_consistency > 0.3:
+                regime = "BULLISH"
+            elif price_change_pct < -5 and trend_consistency < -0.3:
+                regime = "BEARISH"
+            elif price_change_pct > 0:
+                regime = "WEAK BULL"
+            elif price_change_pct < 0:
+                regime = "WEAK BEAR"
+            else:
+                regime = "NEUTRAL"
+
+            return f"{regime} ({price_change_pct:+.1f}%)"
+
+        except Exception as e:
+            logger.warning(f"[REGIME] Failed to detect regime: {e}")
+            return "UNKNOWN"
+
     async def run_walk_forward_backtest(self):
         """
         Run backtest with walk-forward analysis to prevent look-ahead bias.
@@ -164,8 +231,12 @@ class VWAPMLBacktest:
             test_start = current_date
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
 
+            # Detect regime for this window
+            regime = await self._detect_regime(test_start, test_end)
+
             logger.info("="*80)
             logger.info(f"[TEST WINDOW #{test_period_num}]: {test_start.strftime('%d/%m/%y')} - {test_end.strftime('%d/%m/%y')}")
+            logger.info(f"   Market Regime: {regime}")
             logger.info(f"   Status: Testing with ML filtering")
             logger.info("="*80)
 
@@ -182,6 +253,7 @@ class VWAPMLBacktest:
                 'period': test_period_num,
                 'start': test_start,
                 'end': test_end,
+                'regime': regime,
                 'results': period_results
             })
 
@@ -243,7 +315,12 @@ class VWAPMLBacktest:
             'leverage': self.leverage,
             'risk_per_trade': self.risk_per_trade
         }
-        period_engine = VWAPBacktestEngine(period_config)
+        period_engine = VWAPBacktestEngine(
+            period_config,
+            ml_optimizer=self.ml_optimizer if use_ml else None,
+            use_ml=use_ml,
+            min_win_probability=self.min_win_probability
+        )
 
         # Apply relaxed parameters
         if self.relaxed_params:
@@ -317,7 +394,8 @@ class VWAPMLBacktest:
                 window_max_profits.append(largest_win)
 
             # Display window summary
-            logger.info(f"\n[Window #{period_num}]: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')}")
+            regime = wf_result.get('regime', 'UNKNOWN')
+            logger.info(f"\n[Window #{period_num}]: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')} | Regime: {regime}")
             logger.info(f"   {'Starting Capital:':<25} ${starting_capital:.2f}")
             logger.info(f"   {'Ending Capital:':<25} ${ending_capital:.2f}")
             logger.info(f"   {'PnL:':<25} ${net_pnl:+.2f}")

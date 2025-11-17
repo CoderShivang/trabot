@@ -129,7 +129,7 @@ class VWAPBacktestEngine:
     All orders are limit orders with realistic fill simulation
     """
 
-    def __init__(self, config: Dict):
+    def __init__(self, config: Dict, ml_optimizer=None, use_ml: bool = False, min_win_probability: float = 0.52):
         self.config = config
         self.symbol = config.get('symbol', 'BTCUSDT')
         self.timeframe = config.get('timeframe', '1m')
@@ -139,6 +139,11 @@ class VWAPBacktestEngine:
 
         # Fees (limit orders = maker fee, based on notional value)
         self.maker_fee = 0.0002  # 0.02% Binance maker fee on notional value
+
+        # ML filtering
+        self.ml_optimizer = ml_optimizer
+        self.use_ml = use_ml
+        self.min_win_probability = min_win_probability
 
         # Components - Create minimal config for BinanceClient
         binance_config = self._create_binance_config()
@@ -153,6 +158,9 @@ class VWAPBacktestEngine:
         self.closed_trades: List[BacktestPosition] = []
         self.stats = BacktestStats()
         self.order_signals: Dict[str, TradeSignal] = {}  # Map order_id to signal
+
+        # Track executed signals for ML training
+        self.executed_signals: List[Dict] = []  # Stores signal + market_data + outcome
 
         # Equity curve tracking for visualization
         self.equity_curve: List[Dict] = []  # [{'timestamp': ms, 'equity': float, 'drawdown': float}, ...]
@@ -379,7 +387,25 @@ class VWAPBacktestEngine:
                     tqdm.write(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f}")
 
                     if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
-                        self._place_entry_order(best_signal, timestamp)
+                        # ML FILTERING: Check if ML models approve this trade
+                        should_take_trade = True
+                        ml_win_prob = None
+
+                        if self.use_ml and self.ml_optimizer and self.ml_optimizer.is_trained:
+                            # Convert signal to dict format for ML
+                            signal_dict = self._signal_to_dict(best_signal)
+                            market_data = self._build_market_data(row, hist_df)
+
+                            # Get ML prediction
+                            should_take_trade, ml_win_prob, ml_details = self.ml_optimizer.should_take_trade(signal_dict, market_data)
+
+                            if not should_take_trade:
+                                tqdm.write(f"  [ML FILTER] REJECTED - Win prob: {ml_win_prob:.1%} < {self.min_win_probability:.1%}")
+                            else:
+                                tqdm.write(f"  [ML FILTER] APPROVED - Win prob: {ml_win_prob:.1%}")
+
+                        if should_take_trade:
+                            self._place_entry_order(best_signal, timestamp, market_data if self.use_ml else None)
 
         # Close progress bar
         pbar.close()
@@ -491,8 +517,15 @@ class VWAPBacktestEngine:
         for pos in closed_positions:
             self.positions.remove(pos)
 
-    def _place_entry_order(self, signal: TradeSignal, timestamp: int):
+    def _place_entry_order(self, signal: TradeSignal, timestamp: int, market_data: Dict = None):
         """Place limit entry order with leverage"""
+        # Store signal and market data for ML training
+        if market_data:
+            self.order_signals[f"pending_{timestamp}"] = {
+                'signal': signal,
+                'market_data': market_data,
+                'timestamp': timestamp
+            }
         # FULL COMPOUNDING: Use current capital for realistic growth
         # Dynamic leverage naturally controls position sizes as account grows
         position_base = self.current_capital
@@ -786,6 +819,18 @@ class VWAPBacktestEngine:
 
         self.closed_trades.append(position)
 
+        # Track executed signal outcome for ML training
+        signal_key = f"pending_{position.order_id.split('_')[1]}"  # Extract timestamp from order_id
+        if signal_key in self.order_signals:
+            signal_info = self.order_signals[signal_key]
+            self.executed_signals.append({
+                'signal': signal_info['signal'],
+                'market_data': signal_info['market_data'],
+                'pnl': net_pnl,
+                'outcome': 1 if net_pnl > 0 else 0
+            })
+            del self.order_signals[signal_key]  # Clean up
+
         # Log trade
         duration_mins = (timestamp - position.entry_time) / 1000 / 60
         tqdm.write(f"[EXIT] {reason} | P&L: ${net_pnl:,.2f} ({pnl_pct:+.2f}%)")
@@ -1069,6 +1114,34 @@ class VWAPBacktestEngine:
         logger.info(f"  TP Fills: {self.stats.tp_fills}")
         logger.info(f"  SL Fills: {self.stats.sl_fills}")
         logger.info(f"{'='*80}\n")
+
+    def _signal_to_dict(self, signal: TradeSignal) -> Dict:
+        """Convert TradeSignal dataclass to dictionary for ML"""
+        from dataclasses import asdict
+        signal_dict = asdict(signal)
+        # Ensure all required fields are present
+        return signal_dict
+
+    def _build_market_data(self, current_row, hist_df: pd.DataFrame) -> Dict:
+        """Build market data dictionary from current state"""
+        # Calculate volatility (ATR-like measure from recent data)
+        recent = hist_df.tail(20)
+        volatility = (recent['high'] - recent['low']).mean() / recent['close'].mean()
+
+        # Volume ratio (current vs average)
+        avg_volume = hist_df['volume'].tail(20).mean()
+        volume_ratio = current_row['volume'] / avg_volume if avg_volume > 0 else 1.0
+
+        # Spread estimate (simplified)
+        spread_bps = ((current_row['high'] - current_row['low']) / current_row['close']) * 10000
+
+        return {
+            'price': float(current_row['close']),
+            'timestamp': int(current_row['timestamp']),
+            'volatility': float(volatility),
+            'volume_ratio': float(volume_ratio),
+            'spread_bps': float(spread_bps)
+        }
 
     def _klines_to_df(self, klines) -> pd.DataFrame:
         """Convert klines to DataFrame"""
