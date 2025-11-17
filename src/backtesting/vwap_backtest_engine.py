@@ -387,15 +387,15 @@ class VWAPBacktestEngine:
                     tqdm.write(f"[SIGNAL] {best_signal.direction} @ ${best_signal.entry_price:,.0f} | Conf: {best_signal.confidence:.0f}")
 
                     if best_signal.confidence >= 50:  # Lowered from 65 for initial testing
+                        # Build market data for ML features (needed for both training and testing)
+                        signal_dict = self._signal_to_dict(best_signal)
+                        market_data = self._build_market_data(row, hist_df)
+
                         # ML FILTERING: Check if ML models approve this trade
                         should_take_trade = True
                         ml_win_prob = None
 
                         if self.use_ml and self.ml_optimizer and self.ml_optimizer.is_trained:
-                            # Convert signal to dict format for ML
-                            signal_dict = self._signal_to_dict(best_signal)
-                            market_data = self._build_market_data(row, hist_df)
-
                             # Get ML prediction
                             should_take_trade, ml_win_prob, ml_details = self.ml_optimizer.should_take_trade(signal_dict, market_data)
 
@@ -405,7 +405,7 @@ class VWAPBacktestEngine:
                                 tqdm.write(f"  [ML FILTER] APPROVED - Win prob: {ml_win_prob:.1%}")
 
                         if should_take_trade:
-                            self._place_entry_order(best_signal, timestamp, market_data if self.use_ml else None)
+                            self._place_entry_order(best_signal, timestamp, market_data)
 
         # Close progress bar
         pbar.close()
