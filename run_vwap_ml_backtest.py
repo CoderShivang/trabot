@@ -153,8 +153,8 @@ class VWAPMLBacktest:
             'taker_buy_quote', 'ignore'
         ])
 
-        # Convert types
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+        # Convert types (make timestamps timezone-aware in UTC)
+        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms', utc=True)
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
 
