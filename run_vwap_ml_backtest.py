@@ -572,12 +572,33 @@ class VWAPMLBacktest:
 
         logger.info("="*100)
 
+        # Aggregate all trades from all windows for dashboard
+        all_trades = []
+        walk_forward_windows_metadata = []
+        for wf_result in self.walk_forward_results:
+            period_res = wf_result['results']
+            if period_res and 'trades' in period_res:
+                all_trades.extend(period_res['trades'])
+
+            # Build window metadata for dashboard
+            if period_res:
+                walk_forward_windows_metadata.append({
+                    'period': wf_result['period'],
+                    'start': wf_result['start'],
+                    'end': wf_result['end'],
+                    'regime': wf_result.get('regime', 'UNKNOWN'),
+                    'performance': period_res.get('performance', {}),
+                    'config': period_res.get('backtest_config', {})
+                })
+
         # Build aggregated results dictionary
         aggregated = {
             'backtest_config': {
                 'symbol': self.symbol,
                 'timeframe': self.timeframe,
                 'days': self.days,
+                'start_date': self.start_date.strftime('%Y-%m-%d') if self.start_date else None,
+                'end_date': self.end_date.strftime('%Y-%m-%d') if self.end_date else None,
                 'initial_capital': self.initial_capital,
                 'final_capital': final_balance,
                 'leverage': self.leverage,
@@ -600,9 +621,16 @@ class VWAPMLBacktest:
                 'avg_win_rate': avg_win_rate,
                 'avg_ending_capital': avg_ending_capital,
                 'avg_max_drawdown': avg_max_drawdown,
-                'avg_max_profit': avg_max_profit
+                'avg_max_profit': avg_max_profit,
+                # Add ML stats to performance for dashboard
+                'total_signals_generated': total_signals_all_windows,
+                'signals_rejected_by_ml': rejected_signals_all_windows,
+                'signals_approved_by_ml': approved_signals_all_windows,
+                'ml_filter_rate': overall_ml_filter_rate
             },
-            'walk_forward_periods': self.walk_forward_results
+            'trades': all_trades,  # Combined trades from all windows
+            'walk_forward_windows': walk_forward_windows_metadata,  # For dashboard window breakdown
+            'walk_forward_periods': self.walk_forward_results  # Keep original for compatibility
         }
 
         return aggregated
