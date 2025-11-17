@@ -90,17 +90,20 @@ class TradeSignal:
     vwap_upper_2std: float = 0.0
     vwap_lower_2std: float = 0.0
     vwap_distance_pct: float = 0.0  # % distance from VWAP
-    distance_to_band_dollars: float = 0.0  # Distance to entry band in $
+    vwap_band_distance: float = 0.0  # Distance to entry band in $ (for ML)
+    vwap_state: dict = None  # Dict with 'vwap' and 'sigma' for ML band position calc
 
     # ML Features - Market patterns
     vwap_resistance_rejections: int = 0  # VWAP acting as resistance
     vwap_support_bounces: int = 0  # VWAP acting as support
     price_structure: str = 'neutral'  # 'bullish', 'bearish', 'neutral'
     market_regime: str = 'neutral_regime'  # 'bullish_regime', 'bearish_regime', 'neutral_regime'
+    regime_filter: str = 'neutral'  # For ML - simplified regime (bullish/bearish/neutral)
     short_term_regime: str = 'ranging'  # 'ranging', 'trending_up', 'trending_down'
 
     # ML Features - Momentum
     is_rapid_move: bool = False
+    rapid_momentum: bool = False  # For ML - same as is_rapid_move
     momentum_direction: str = 'neutral'  # 'bullish', 'bearish', 'neutral'
     momentum_strength: float = 0.0
 
@@ -111,6 +114,8 @@ class TradeSignal:
     has_support_below: bool = False
     support_below_level: float = 0.0
     distance_to_support_below: float = 0.0
+    local_sr_present: bool = False  # For ML - True if has overhead resistance or support below
+    zone_distance_pct: float = 0.0  # For ML - % distance to SR zone
 
     # ML Features - Volatility
     volatility_60: float = 0.0  # 60-bar ATR-like metric
@@ -683,6 +688,20 @@ class VWAPStrategy:
             volatility_60 = 0.0
             avg_candle_range_pct = 0.0
 
+        # Calculate zone distance percentage if SR zone nearby
+        zone_distance_pct = 0.0
+        if overhead_resistance is not None:
+            zone_distance_pct = abs(current_price - overhead_resistance) / current_price
+        elif support_below is not None:
+            zone_distance_pct = abs(current_price - support_below) / current_price
+
+        # Simplify regime for ML (bullish_regime -> bullish, etc.)
+        regime_filter = 'neutral'
+        if 'bullish' in market_regime:
+            regime_filter = 'bullish'
+        elif 'bearish' in market_regime:
+            regime_filter = 'bearish'
+
         return {
             # VWAP metrics
             'vwap_value': vwap.vwap,
@@ -692,17 +711,20 @@ class VWAPStrategy:
             'vwap_upper_2std': vwap.upper_2std,
             'vwap_lower_2std': vwap.lower_2std,
             'vwap_distance_pct': (current_price - vwap.vwap) / vwap.vwap,
-            'distance_to_band_dollars': distance_to_band,
+            'vwap_band_distance': distance_to_band,  # For ML
+            'vwap_state': {'vwap': vwap.vwap, 'sigma': vwap.std},  # For ML band position calc
 
             # Market patterns
             'vwap_resistance_rejections': vwap_rejections['resistance_rejections'],
             'vwap_support_bounces': vwap_rejections['support_bounces'],
             'price_structure': price_structure,
             'market_regime': market_regime,
+            'regime_filter': regime_filter,  # For ML - simplified
             'short_term_regime': regime,
 
             # Momentum
             'is_rapid_move': momentum['is_rapid'],
+            'rapid_momentum': momentum['is_rapid'],  # For ML - same as is_rapid_move
             'momentum_direction': momentum['direction'],
             'momentum_strength': momentum['strength'],
 
@@ -713,6 +735,8 @@ class VWAPStrategy:
             'has_support_below': support_below is not None,
             'support_below_level': support_below if support_below else 0.0,
             'distance_to_support_below': abs(current_price - support_below) if support_below else 0.0,
+            'local_sr_present': overhead_resistance is not None or support_below is not None,  # For ML
+            'zone_distance_pct': zone_distance_pct,  # For ML
 
             # Volatility
             'volatility_60': volatility_60,
