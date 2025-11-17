@@ -129,8 +129,12 @@ class VWAPMLBacktest:
         logger.info("="*80)
 
         # Phase 1: Initial training period (collect data without trading)
-        logger.info("\n[PHASE 1] Initial training period (no trading)...")
         training_end = start_date + timedelta(days=self.walk_forward_window_days)
+
+        logger.info("\n" + "="*80)
+        logger.info(f"📚 TRAINING WINDOW: {start_date.strftime('%d/%m/%y')} - {training_end.strftime('%d/%m/%y')}")
+        logger.info(f"   Collecting signals for initial ML training (no trading)")
+        logger.info("="*80)
 
         training_results = await self._run_period(
             start_date,
@@ -140,14 +144,16 @@ class VWAPMLBacktest:
 
         # Train initial ML models
         if len(self.all_signals) >= 30:  # Minimum 30 signals for training
-            logger.info(f"\n[ML-TRAIN] Training initial models on {len(self.all_signals)} signals...")
+            logger.info(f"\n✓ Training ML models on {len(self.all_signals)} signals...")
             metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
-            logger.info(f"[ML-TRAIN] Initial training complete")
+            logger.info(f"✓ Initial training complete\n")
         else:
-            logger.warning(f"[ML-TRAIN] Insufficient signals ({len(self.all_signals)}/30), skipping ML")
+            logger.warning(f"⚠ Insufficient signals ({len(self.all_signals)}/30), skipping ML\n")
 
         # Phase 2: Walk-forward testing with ML filtering
-        logger.info("\n[PHASE 2] Walk-forward testing with ML filtering...")
+        logger.info("="*80)
+        logger.info("🔄 WALK-FORWARD TESTING PHASE")
+        logger.info("="*80 + "\n")
 
         current_date = training_end
         retrain_counter = 0
@@ -158,14 +164,18 @@ class VWAPMLBacktest:
             test_start = current_date
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
 
-            logger.info(f"\n[TEST PERIOD {test_period_num}] {test_start.strftime('%Y-%m-%d')} to {test_end.strftime('%Y-%m-%d')}")
+            logger.info("="*80)
+            logger.info(f"📊 TEST WINDOW #{test_period_num}: {test_start.strftime('%d/%m/%y')} - {test_end.strftime('%d/%m/%y')}")
+            logger.info(f"   Status: Testing with ML filtering")
+            logger.info("="*80)
 
             # Run backtest with ML filtering
             period_results = await self._run_period(
                 test_start,
                 test_end,
                 train_mode=False,
-                use_ml=True
+                use_ml=True,
+                window_num=test_period_num
             )
 
             self.walk_forward_results.append({
@@ -175,10 +185,24 @@ class VWAPMLBacktest:
                 'results': period_results
             })
 
+            # Display window results
+            if period_results:
+                perf = period_results.get('performance', {})
+                config = period_results.get('backtest_config', {})
+                logger.info(f"\n   💰 Window PnL: ${perf.get('net_pnl', 0):.2f}")
+                logger.info(f"   📈 Ending Capital: ${config.get('final_capital', 0):.2f}")
+                logger.info(f"   ✅ Win Rate: {perf.get('win_rate', 0):.1f}%")
+                logger.info("")
+
             # Retrain ML models if we have enough new data
             if len(self.all_signals) >= 50 and retrain_counter >= self.retrain_interval_days:
-                logger.info(f"\n[ML-RETRAIN] Retraining models on {len(self.all_signals)} total signals...")
+                train_start_retrain = start_date
+                train_end_retrain = test_end
+                logger.info(f"🔄 Retraining ML models...")
+                logger.info(f"   Training period: {train_start_retrain.strftime('%d/%m/%y')} - {train_end_retrain.strftime('%d/%m/%y')}")
+                logger.info(f"   Total signals: {len(self.all_signals)}")
                 metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
+                logger.info(f"   ✓ Retrain complete\n")
                 retrain_counter = 0
 
             current_date = test_end
@@ -196,7 +220,8 @@ class VWAPMLBacktest:
         start_date: datetime,
         end_date: datetime,
         train_mode: bool = False,
-        use_ml: bool = False
+        use_ml: bool = False,
+        window_num: int = 0
     ):
         """
         Run backtest for a specific period.
@@ -242,37 +267,119 @@ class VWAPMLBacktest:
 
     def _aggregate_results(self):
         """Aggregate results from all walk-forward periods"""
-        logger.info("\n" + "="*80)
-        logger.info("AGGREGATING WALK-FORWARD RESULTS")
-        logger.info("="*80)
+        logger.info("\n" + "="*100)
+        logger.info("📋 INDIVIDUAL WINDOW RESULTS")
+        logger.info("="*100)
 
+        # Track aggregate metrics
         total_trades = 0
         total_wins = 0
         total_losses = 0
         total_pnl = 0.0
         total_fees = 0.0
-        all_trade_durations = []
 
+        # For averaging
+        window_win_rates = []
+        window_ending_capitals = []
+        window_max_drawdowns = []
+        window_max_profits = []
+
+        # Display individual window results
         for wf_result in self.walk_forward_results:
+            period_num = wf_result['period']
+            start_date = wf_result['start']
+            end_date = wf_result['end']
             period_res = wf_result['results']
             perf = period_res.get('performance', {})
+            config = period_res.get('backtest_config', {})
 
-            total_trades += perf.get('total_trades', 0)
+            # Extract metrics
+            starting_capital = config.get('initial_capital', self.initial_capital)
+            ending_capital = config.get('final_capital', starting_capital)
+            win_rate = perf.get('win_rate', 0)
+            max_drawdown = perf.get('max_drawdown', 0)
+            largest_win = perf.get('largest_win', 0)
+            net_pnl = perf.get('net_pnl', 0)
+            trades = perf.get('total_trades', 0)
+
+            # Accumulate for totals
+            total_trades += trades
             total_wins += perf.get('winning_trades', 0)
             total_losses += perf.get('losing_trades', 0)
             total_pnl += perf.get('total_pnl', 0)
             total_fees += perf.get('total_fees', 0)
 
-            logger.info(f"Period {wf_result['period']}: "
-                       f"{perf.get('total_trades', 0)} trades, "
-                       f"WR: {perf.get('win_rate', 0):.1f}%, "
-                       f"PnL: ${perf.get('total_pnl', 0):.2f}")
+            # Track for averages
+            if trades > 0:  # Only include windows with trades
+                window_win_rates.append(win_rate)
+                window_ending_capitals.append(ending_capital)
+                window_max_drawdowns.append(abs(max_drawdown))
+                window_max_profits.append(largest_win)
 
-        win_rate = (total_wins / total_trades * 100) if total_trades > 0 else 0
+            # Display window summary
+            logger.info(f"\n🪟 Window #{period_num}: {start_date.strftime('%d/%m/%y')} - {end_date.strftime('%d/%m/%y')}")
+            logger.info(f"   {'Starting Capital:':<25} ${starting_capital:.2f}")
+            logger.info(f"   {'Ending Capital:':<25} ${ending_capital:.2f}")
+            logger.info(f"   {'PnL:':<25} ${net_pnl:+.2f}")
+            logger.info(f"   {'Win Rate:':<25} {win_rate:.1f}%")
+            logger.info(f"   {'Trades:':<25} {trades}")
+            logger.info(f"   {'Max Drawdown:':<25} ${max_drawdown:.2f}")
+            logger.info(f"   {'Max Profit (Single):':<25} ${largest_win:.2f}")
+
+        # Calculate aggregate statistics
+        win_rate_overall = (total_wins / total_trades * 100) if total_trades > 0 else 0
         final_balance = self.initial_capital + total_pnl - total_fees
         net_pnl = total_pnl - total_fees
         return_pct = (net_pnl / self.initial_capital * 100)
 
+        # Calculate averages
+        avg_win_rate = sum(window_win_rates) / len(window_win_rates) if window_win_rates else 0
+        avg_ending_capital = sum(window_ending_capitals) / len(window_ending_capitals) if window_ending_capitals else self.initial_capital
+        avg_max_drawdown = sum(window_max_drawdowns) / len(window_max_drawdowns) if window_max_drawdowns else 0
+        avg_max_profit = sum(window_max_profits) / len(window_max_profits) if window_max_profits else 0
+
+        # Print aggregate summary
+        logger.info("\n" + "="*100)
+        logger.info("📊 AGGREGATE RESULTS (ALL WINDOWS)")
+        logger.info("="*100)
+        logger.info(f"\n{'METRIC':<30} {'VALUE':<30}")
+        logger.info("-"*100)
+        logger.info(f"{'Starting Capital:':<30} ${self.initial_capital:.2f}")
+        logger.info(f"{'Final Balance:':<30} ${final_balance:.2f}")
+        logger.info(f"{'Net PnL:':<30} ${net_pnl:+.2f}")
+        logger.info(f"{'Return:':<30} {return_pct:+.2f}%")
+        logger.info("")
+        logger.info(f"{'Total Trades:':<30} {total_trades}")
+        logger.info(f"{'Winning Trades:':<30} {total_wins}")
+        logger.info(f"{'Losing Trades:':<30} {total_losses}")
+        logger.info(f"{'Overall Win Rate:':<30} {win_rate_overall:.2f}%")
+        logger.info("")
+        logger.info(f"{'Average Win Rate:':<30} {avg_win_rate:.2f}%")
+        logger.info(f"{'Average Ending Capital:':<30} ${avg_ending_capital:.2f}")
+        logger.info(f"{'Avg Max Drawdown:':<30} ${avg_max_drawdown:.2f}")
+        logger.info(f"{'Avg Max Profit (Single):':<30} ${avg_max_profit:.2f}")
+        logger.info("")
+        logger.info(f"{'Total Fees Paid:':<30} ${total_fees:.2f}")
+        logger.info(f"{'ML Training Samples:':<30} {len(self.all_signals)}")
+        logger.info(f"{'Test Windows:':<30} {len(self.walk_forward_results)}")
+
+        # Performance assessment
+        logger.info("\n" + "="*100)
+        logger.info("📈 PERFORMANCE ASSESSMENT")
+        logger.info("="*100)
+        if win_rate_overall >= self.min_win_probability * 100:
+            logger.info(f"✅ TARGET ACHIEVED: {win_rate_overall:.2f}% >= {self.min_win_probability*100:.0f}%")
+        else:
+            logger.info(f"❌ TARGET MISSED: {win_rate_overall:.2f}% < {self.min_win_probability*100:.0f}%")
+
+        if return_pct > 0:
+            logger.info(f"✅ PROFITABLE: {return_pct:+.2f}% return")
+        else:
+            logger.info(f"❌ UNPROFITABLE: {return_pct:+.2f}% return")
+
+        logger.info("="*100)
+
+        # Build aggregated results dictionary
         aggregated = {
             'backtest_config': {
                 'symbol': self.symbol,
@@ -291,33 +398,19 @@ class VWAPMLBacktest:
                 'total_trades': total_trades,
                 'winning_trades': total_wins,
                 'losing_trades': total_losses,
-                'win_rate': win_rate,
+                'win_rate': win_rate_overall,
                 'total_pnl': total_pnl,
                 'total_fees': total_fees,
                 'net_pnl': net_pnl,
                 'return_pct': return_pct,
-                'ml_training_samples': len(self.all_signals)
+                'ml_training_samples': len(self.all_signals),
+                'avg_win_rate': avg_win_rate,
+                'avg_ending_capital': avg_ending_capital,
+                'avg_max_drawdown': avg_max_drawdown,
+                'avg_max_profit': avg_max_profit
             },
             'walk_forward_periods': self.walk_forward_results
         }
-
-        # Print summary
-        logger.info("\n" + "="*80)
-        logger.info("FINAL RESULTS")
-        logger.info("="*80)
-        logger.info(f"Total Trades: {total_trades}")
-        logger.info(f"Win Rate: {win_rate:.2f}% (Target: {self.min_win_probability*100:.0f}%)")
-        logger.info(f"Winners: {total_wins} | Losers: {total_losses}")
-        logger.info(f"Net PnL: ${net_pnl:.2f} ({return_pct:.2f}%)")
-        logger.info(f"Final Balance: ${final_balance:.2f}")
-        logger.info(f"Total Fees: ${total_fees:.2f}")
-        logger.info(f"ML Training Samples: {len(self.all_signals)}")
-        logger.info("="*80)
-
-        if win_rate >= self.min_win_probability * 100:
-            logger.info(f"✓ TARGET ACHIEVED: Win rate {win_rate:.2f}% >= {self.min_win_probability*100:.0f}%")
-        else:
-            logger.warning(f"✗ TARGET MISSED: Win rate {win_rate:.2f}% < {self.min_win_probability*100:.0f}%")
 
         return aggregated
 
