@@ -43,6 +43,25 @@ class VWAPDashboard:
         if output_path is None:
             output_path = self.results_path.parent / 'dashboard.html'
 
+        # Build title with ML stats if available
+        title_parts = [
+            f"VWAP Backtest Dashboard - {self.config['symbol']}<br>",
+            f"<sub>Win Rate: {self.performance['win_rate']:.1f}% | ",
+            f"Total Trades: {self.performance['total_trades']} | ",
+            f"Net P&L: ${self.performance['net_pnl']:.2f} ({self.performance['return_pct']:.2f}%)"
+        ]
+
+        # Add ML stats if available
+        total_signals = self.performance.get('total_signals_generated', 0)
+        rejected_signals = self.performance.get('signals_rejected_by_ml', 0)
+        approved_signals = self.performance.get('signals_approved_by_ml', 0)
+
+        if total_signals > 0:
+            title_parts.append(f"<br>ML Filter: {total_signals} signals → {rejected_signals} rejected → {approved_signals} approved")
+
+        title_parts.append("</sub>")
+        title_text = "".join(title_parts)
+
         # Create figure with subplots
         fig = make_subplots(
             rows=2, cols=1,
@@ -94,10 +113,7 @@ class VWAPDashboard:
         # Update layout
         fig.update_layout(
             title=dict(
-                text=f"VWAP Backtest Dashboard - {self.config['symbol']}<br>" +
-                     f"<sub>Win Rate: {self.performance['win_rate']:.1f}% | " +
-                     f"Total Trades: {self.performance['total_trades']} | " +
-                     f"Net P&L: ${self.performance['net_pnl']:.2f} ({self.performance['return_pct']:.2f}%)</sub>",
+                text=title_text,
                 x=0.5,
                 xanchor='center'
             ),

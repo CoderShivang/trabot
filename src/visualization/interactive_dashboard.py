@@ -160,6 +160,149 @@ class InteractiveDashboard:
 
         return monthly_list
 
+    def _create_ml_stats_section(self):
+        """Create ML filtering statistics section if ML was used"""
+        # Check if ML stats are present in performance
+        total_signals = self.performance.get('total_signals_generated', 0)
+        rejected_signals = self.performance.get('signals_rejected_by_ml', 0)
+        approved_signals = self.performance.get('signals_approved_by_ml', 0)
+        ml_filter_rate = self.performance.get('ml_filter_rate', 0)
+
+        # If no ML stats, return empty div
+        if total_signals == 0 and rejected_signals == 0 and approved_signals == 0:
+            return html.Div()
+
+        # Create ML stats display
+        ml_stats_content = [
+            html.H3("ML Filtering Statistics", style={'color': '#34495e'}),
+            html.P("Machine Learning signal filtering performance and walk-forward window breakdown",
+                   style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+            # Overall ML stats
+            html.Div([
+                html.Div([
+                    html.H4(f"{total_signals:,}", style={'margin': '5px', 'color': '#2980b9'}),
+                    html.P("Total Signals", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#e3f2fd', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{rejected_signals:,}", style={'margin': '5px', 'color': '#e74c3c'}),
+                    html.P("ML Rejected", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{approved_signals:,}", style={'margin': '5px', 'color': '#27ae60'}),
+                    html.P("Net Signals (ML Approved)", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#e8f5e9', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{ml_filter_rate:.1f}%", style={'margin': '5px', 'color': '#f39c12'}),
+                    html.P("ML Filter Rate", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#fff3e0', 'borderRadius': '8px', 'minWidth': '150px'}),
+            ], style={'textAlign': 'center'}),
+        ]
+
+        # Check if this is a walk-forward backtest with window breakdown
+        walk_forward_windows = self.results.get('walk_forward_windows', [])
+        if walk_forward_windows:
+            ml_stats_content.append(html.Hr(style={'margin': '20px 0'}))
+            ml_stats_content.append(html.H4("Walk-Forward Window Breakdown",
+                                           style={'color': '#34495e', 'marginTop': '20px'}))
+
+            # Create table data for windows
+            window_table_data = []
+            for i, window in enumerate(walk_forward_windows, 1):
+                perf = window.get('performance', {})
+                config = window.get('config', {})
+
+                # Extract dates
+                start_date = config.get('start_date', 'N/A')
+                end_date = config.get('end_date', 'N/A')
+                if start_date != 'N/A':
+                    start_date = pd.to_datetime(start_date).strftime('%Y-%m-%d')
+                if end_date != 'N/A':
+                    end_date = pd.to_datetime(end_date).strftime('%Y-%m-%d')
+
+                date_range = f"{start_date} to {end_date}"
+
+                # Get window stats
+                window_total = perf.get('total_signals_generated', 0)
+                window_rejected = perf.get('signals_rejected_by_ml', 0)
+                window_approved = perf.get('signals_approved_by_ml', 0)
+                window_filter_rate = perf.get('ml_filter_rate', 0)
+                window_trades = perf.get('total_trades', 0)
+                window_pnl = perf.get('net_pnl', 0)
+                window_win_rate = perf.get('win_rate', 0)
+
+                window_table_data.append({
+                    'window': f"#{i}",
+                    'date_range': date_range,
+                    'total_signals': window_total,
+                    'rejected': window_rejected,
+                    'approved': window_approved,
+                    'filter_rate': f"{window_filter_rate:.1f}%",
+                    'trades': window_trades,
+                    'pnl': window_pnl,
+                    'win_rate': f"{window_win_rate:.1f}%",
+                })
+
+            # Create window table
+            ml_stats_content.append(
+                dash_table.DataTable(
+                    columns=[
+                        {'name': 'Window', 'id': 'window'},
+                        {'name': 'Date Range', 'id': 'date_range'},
+                        {'name': 'Total Signals', 'id': 'total_signals', 'type': 'numeric'},
+                        {'name': 'ML Rejected', 'id': 'rejected', 'type': 'numeric'},
+                        {'name': 'Net Signals', 'id': 'approved', 'type': 'numeric'},
+                        {'name': 'Filter Rate', 'id': 'filter_rate'},
+                        {'name': 'Trades', 'id': 'trades', 'type': 'numeric'},
+                        {'name': 'P&L', 'id': 'pnl', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Win Rate', 'id': 'win_rate'},
+                    ],
+                    data=window_table_data,
+                    style_data_conditional=[
+                        {
+                            'if': {'filter_query': '{pnl} > 0', 'column_id': 'pnl'},
+                            'color': '#27ae60',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'filter_query': '{pnl} < 0', 'column_id': 'pnl'},
+                            'color': '#e74c3c',
+                            'fontWeight': 'bold'
+                        },
+                    ],
+                    style_header={
+                        'backgroundColor': '#34495e',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_cell={
+                        'textAlign': 'center',
+                        'padding': '10px',
+                        'fontSize': '13px'
+                    },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': 'date_range'},
+                            'textAlign': 'left',
+                            'minWidth': '180px'
+                        }
+                    ],
+                )
+            )
+
+        return html.Div(ml_stats_content,
+                       style={'backgroundColor': '#ecf0f1', 'padding': '15px',
+                              'borderRadius': '5px', 'margin': '20px 0'})
+
     def _create_trades_by_day_chart(self):
         """Create bar chart showing win/loss breakdown by day of week"""
         trades_by_day = self.performance.get('trades_by_day', {})
@@ -523,6 +666,11 @@ class InteractiveDashboard:
                            style={'color': '#27ae60' if self.performance['net_pnl'] > 0 else '#e74c3c'}),
                 ], style={'display': 'inline-block', 'margin': '20px'}),
             ], style={'textAlign': 'center', 'backgroundColor': '#ecf0f1', 'padding': '10px', 'borderRadius': '5px'}),
+
+            html.Hr(),
+
+            # ML Filtering Stats Section (if ML was used)
+            self._create_ml_stats_section(),
 
             html.Hr(),
 
