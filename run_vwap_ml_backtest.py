@@ -26,6 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from src.backtesting.vwap_backtest_engine import VWAPBacktestEngine
 from src.learning.vwap_ml_optimizer import VWAPMLOptimizer
+from src.learning.adaptive_ml_filter import AdaptiveMLFilter
 from src.utils.logger import setup_logger
 
 logger = setup_logger(__name__)
@@ -49,6 +50,7 @@ class VWAPMLBacktest:
         walk_forward_window_days: int = 7,  # Train on 7 days, test on next period
         retrain_interval_days: int = 3,  # Retrain every 3 days
         min_win_probability: float = 0.60,  # 60% minimum win probability
+        use_adaptive_filter: bool = True,  # Enable adaptive threshold adjustment
         relaxed_params: dict = None
     ):
         self.symbol = symbol
@@ -62,10 +64,26 @@ class VWAPMLBacktest:
         self.walk_forward_window_days = walk_forward_window_days
         self.retrain_interval_days = retrain_interval_days
         self.min_win_probability = min_win_probability
+        self.use_adaptive_filter = use_adaptive_filter
         self.relaxed_params = relaxed_params or {}
 
         # Initialize ML optimizer
         self.ml_optimizer = VWAPMLOptimizer(min_win_probability=min_win_probability)
+
+        # Initialize Adaptive ML Filter (learns from rejected signals)
+        if self.use_adaptive_filter:
+            self.adaptive_filter = AdaptiveMLFilter(
+                initial_min_win_prob=min_win_probability,
+                min_threshold=max(0.48, min_win_probability - 0.12),  # Allow 12% reduction
+                max_threshold=min(0.70, min_win_probability + 0.10),  # Allow 10% increase
+                adjustment_step=0.02,  # Adjust by 2% at a time
+                false_negative_tolerance=0.25,  # Tolerate 25% false negatives
+                min_opportunity_cost=2.0  # Only adjust if missing >$2 in profits
+            )
+            logger.info(f"[ADAPTIVE] Adaptive ML filter enabled")
+            logger.info(f"[ADAPTIVE] Threshold range: {self.adaptive_filter.min_threshold:.1%} - {self.adaptive_filter.max_threshold:.1%}")
+        else:
+            self.adaptive_filter = None
 
         # Prepare strategy parameters (with relaxed params if provided)
         strategy_params = {}
@@ -293,6 +311,13 @@ class VWAPMLBacktest:
                 metrics = self.ml_optimizer.train_models(self.all_signals, self.all_outcomes)
                 logger.info(f"   [OK] Retrain complete - models updated with latest data\n")
 
+            # Update ML threshold with adaptive filter (if enabled)
+            current_threshold = self.min_win_probability
+            if self.adaptive_filter:
+                current_threshold = self.adaptive_filter.get_current_threshold()
+                self.ml_optimizer.min_win_probability = current_threshold
+                logger.info(f"[ADAPTIVE] Using adaptive threshold: {current_threshold:.1%}")
+
             # Calculate test period
             test_start = current_date
             test_end = min(current_date + timedelta(days=self.retrain_interval_days), end_date)
@@ -334,6 +359,28 @@ class VWAPMLBacktest:
                 logger.info(f"   Ending Capital: ${config.get('final_capital', 0):.2f}")
                 logger.info(f"   Win Rate: {perf.get('win_rate', 0):.1f}%")
                 logger.info("")
+
+                # Adaptive ML Filter: Analyze rejected signals and adjust threshold
+                if self.adaptive_filter and test_period_num > 1:
+                    # Get actual trades from this window
+                    actual_trades = period_results.get('trades', [])
+
+                    # Simulate outcomes for rejected signals
+                    analysis = self.adaptive_filter.simulate_rejected_outcomes(
+                        window_num=test_period_num,
+                        actual_trades=actual_trades
+                    )
+
+                    # Adjust threshold if needed
+                    adjusted = self.adaptive_filter.adjust_threshold(
+                        window_num=test_period_num,
+                        analysis=analysis
+                    )
+
+                    if adjusted:
+                        logger.info(f"[ADAPTIVE] ✅ Threshold adjusted for next window")
+                    else:
+                        logger.info(f"[ADAPTIVE] No threshold adjustment needed")
 
             # Move to next window
             current_date = test_end
@@ -379,7 +426,8 @@ class VWAPMLBacktest:
             period_config,
             ml_optimizer=self.ml_optimizer if use_ml else None,
             use_ml=use_ml,
-            min_win_probability=self.min_win_probability
+            min_win_probability=self.min_win_probability,
+            adaptive_filter=self.adaptive_filter if use_ml else None  # Pass adaptive filter for rejection tracking
         )
 
         # Apply relaxed parameters

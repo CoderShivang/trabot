@@ -134,7 +134,7 @@ class VWAPBacktestEngine:
     All orders are limit orders with realistic fill simulation
     """
 
-    def __init__(self, config: Dict, ml_optimizer=None, use_ml: bool = False, min_win_probability: float = 0.52):
+    def __init__(self, config: Dict, ml_optimizer=None, use_ml: bool = False, min_win_probability: float = 0.52, adaptive_filter=None):
         self.config = config
         self.symbol = config.get('symbol', 'BTCUSDT')
         self.timeframe = config.get('timeframe', '1m')
@@ -149,6 +149,7 @@ class VWAPBacktestEngine:
         self.ml_optimizer = ml_optimizer
         self.use_ml = use_ml
         self.min_win_probability = min_win_probability
+        self.adaptive_filter = adaptive_filter  # For tracking rejected signals
 
         # Components - Create minimal config for BinanceClient
         binance_config = self._create_binance_config()
@@ -451,6 +452,15 @@ class VWAPBacktestEngine:
                             if not should_take_trade:
                                 self.stats.signals_rejected_by_ml += 1
                                 tqdm.write(f"  [ML FILTER] REJECTED - Win prob: {ml_win_prob:.1%} < {self.min_win_probability:.1%}")
+
+                                # Record rejection for adaptive filter analysis
+                                if self.adaptive_filter:
+                                    self.adaptive_filter.record_rejection(
+                                        signal=signal_dict,
+                                        market_data=market_data,
+                                        ml_win_prob=ml_win_prob,
+                                        reason=f"Below threshold ({ml_win_prob:.1%} < {self.min_win_probability:.1%})"
+                                    )
                             else:
                                 self.stats.signals_approved_by_ml += 1
                                 tqdm.write(f"  [ML FILTER] APPROVED - Win prob: {ml_win_prob:.1%}")
