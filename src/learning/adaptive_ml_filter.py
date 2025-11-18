@@ -267,7 +267,7 @@ class AdaptiveMLFilter:
                 self.current_threshold = new_threshold
                 adjusted = True
 
-                logger.warning(f"[ADAPTIVE] ⬇️ LOWERING threshold: {old_threshold:.1%} → {new_threshold:.1%}")
+                logger.warning(f"[ADAPTIVE] LOWERING threshold: {old_threshold:.1%} -> {new_threshold:.1%}")
                 logger.warning(f"           Reason: {false_negative_rate:.1%} false negatives, "
                              f"${opportunity_cost:.2f} opportunity cost")
 
@@ -283,7 +283,7 @@ class AdaptiveMLFilter:
                 self.current_threshold = new_threshold
                 adjusted = True
 
-                logger.info(f"[ADAPTIVE] ⬆️ RAISING threshold: {old_threshold:.1%} → {new_threshold:.1%}")
+                logger.info(f"[ADAPTIVE] RAISING threshold: {old_threshold:.1%} -> {new_threshold:.1%}")
                 logger.info(f"           Reason: Low false negatives ({false_negative_rate:.1%}), "
                           f"can be more selective")
 
@@ -325,23 +325,23 @@ class AdaptiveMLFilter:
 ║         ADAPTIVE ML FILTER - PERFORMANCE REPORT              ║
 ╚══════════════════════════════════════════════════════════════╝
 
-📊 Current Settings:
+Current Settings:
    Win Probability Threshold: {stats['current_threshold']:.1%}
    Threshold Range: {self.min_threshold:.1%} - {self.max_threshold:.1%}
 
-📈 Cumulative Analysis:
+Cumulative Analysis:
    Total False Negatives: {stats['total_false_negatives']} (rejected winners)
    Total True Negatives: {stats['total_true_negatives']} (rejected losers)
    False Negative Rate: {stats['cumulative_fn_rate']:.1%}
    Total Opportunity Cost: ${stats['total_opportunity_cost']:.2f}
 
-🎯 Threshold Adjustments:
+Threshold Adjustments:
    Total Adjustments: {stats['threshold_adjustments']}
 
 Threshold History:
 """
         for h in stats['threshold_history'][-5:]:  # Last 5 windows
-            arrow = "↓" if h['adjusted'] and h['threshold'] < self.current_threshold else "↑" if h['adjusted'] else "→"
+            arrow = "v" if h['adjusted'] and h['threshold'] < self.current_threshold else "^" if h['adjusted'] else "-"
             report += f"   Window #{h['window']:2d}: {h['threshold']:.1%} {arrow} | FN Rate: {h['false_negative_rate']:.1%} | Cost: ${h['opportunity_cost']:.2f}\n"
 
         return report

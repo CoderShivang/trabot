@@ -378,7 +378,7 @@ class VWAPMLBacktest:
                     )
 
                     if adjusted:
-                        logger.info(f"[ADAPTIVE] ✅ Threshold adjusted for next window")
+                        logger.info(f"[ADAPTIVE] Threshold adjusted for next window")
                     else:
                         logger.info(f"[ADAPTIVE] No threshold adjustment needed")
 

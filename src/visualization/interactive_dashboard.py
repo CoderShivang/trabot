@@ -87,7 +87,7 @@ class InteractiveDashboard:
                 fees = 0
 
             # trade['pnl'] is GROSS PnL after the backtest engine fix
-            gross_pnl = trade['pnl']
+            gross_pnl = trade.get('pnl', 0) if trade.get('pnl') is not None else 0
             net_pnl = gross_pnl - fees
 
             daily_data[date_str]['gross_pnl'] += gross_pnl
@@ -163,7 +163,7 @@ class InteractiveDashboard:
                 fees = 0
 
             # trade['pnl'] is GROSS PnL after the backtest engine fix
-            gross_pnl = trade['pnl']
+            gross_pnl = trade.get('pnl', 0) if trade.get('pnl') is not None else 0
             net_pnl = gross_pnl - fees
 
             monthly_data[year_month]['gross_pnl'] += gross_pnl
