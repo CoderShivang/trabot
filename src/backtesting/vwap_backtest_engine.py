@@ -835,23 +835,27 @@ class VWAPBacktestEngine:
         position.exit_time = timestamp
         position.exit_reason = reason
 
-        # Calculate P&L
+        # Calculate GROSS P&L (before any fees)
         if position.direction == 'LONG':
-            pnl = (exit_price - position.entry_price) * position.quantity
+            gross_pnl = (exit_price - position.entry_price) * position.quantity
         else:  # SHORT
-            pnl = (position.entry_price - exit_price) * position.quantity
+            gross_pnl = (position.entry_price - exit_price) * position.quantity
 
-        pnl_pct = (pnl / (position.entry_price * position.quantity)) * 100
+        pnl_pct = (gross_pnl / (position.entry_price * position.quantity)) * 100
 
-        # Deduct exit fees and store in position
+        # Calculate exit fees
         exit_fee = exit_price * position.quantity * self.maker_fee
-        net_pnl = pnl - exit_fee
 
-        position.pnl = net_pnl
+        # Calculate NET P&L (after both entry and exit fees)
+        net_pnl = gross_pnl - exit_fee - position.entry_fee
+
+        # Store GROSS pnl in position.pnl for clarity
+        position.pnl = gross_pnl
         position.pnl_pct = pnl_pct
         position.exit_fee = exit_fee
         position.total_fees = position.entry_fee + exit_fee
 
+        # Update capital with net pnl (gross - both fees)
         self.current_capital += net_pnl
         self.stats.total_fees += exit_fee
 
@@ -864,10 +868,12 @@ class VWAPBacktestEngine:
             'timestamp': timestamp,
             'equity': self.current_capital,
             'drawdown': drawdown,
-            'pnl': net_pnl
+            'gross_pnl': gross_pnl,
+            'net_pnl': net_pnl,
+            'fees': position.total_fees
         })
 
-        # Track day of week statistics
+        # Track day of week statistics (use net PnL for actual profit)
         exit_datetime = datetime.fromtimestamp(timestamp / 1000, tz=timezone.utc)
         day_name = exit_datetime.strftime('%A')  # 'Monday', 'Tuesday', etc.
 
@@ -880,7 +886,7 @@ class VWAPBacktestEngine:
 
         self.closed_trades.append(position)
 
-        # Track executed signal outcome for ML training
+        # Track executed signal outcome for ML training (use net PnL for realistic outcome)
         if position.position_id in self.order_signals:
             signal_info = self.order_signals[position.position_id]
             self.executed_signals.append({
@@ -891,9 +897,9 @@ class VWAPBacktestEngine:
             })
             del self.order_signals[position.position_id]  # Clean up
 
-        # Log trade
+        # Log trade (show both gross and net)
         duration_mins = (timestamp - position.entry_time) / 1000 / 60
-        tqdm.write(f"[EXIT] {reason} | P&L: ${net_pnl:,.2f} ({pnl_pct:+.2f}%)")
+        tqdm.write(f"[EXIT] {reason} | Gross: ${gross_pnl:,.2f} | Fees: ${position.total_fees:.2f} | Net: ${net_pnl:,.2f} ({pnl_pct:+.2f}%)")
 
     def _close_all_positions(self, last_bar, reason: str):
         """Force close all positions at end of backtest"""
@@ -912,13 +918,17 @@ class VWAPBacktestEngine:
 
         self.stats.total_trades = len(self.closed_trades)
 
-        wins = [t for t in self.closed_trades if t.pnl > 0]
-        losses = [t for t in self.closed_trades if t.pnl <= 0]
+        # Calculate net PnL for each trade (gross - fees) for win/loss determination
+        trades_net_pnl = [(t.pnl - t.total_fees) for t in self.closed_trades]
+        wins = [t for t, net in zip(self.closed_trades, trades_net_pnl) if net > 0]
+        losses = [t for t, net in zip(self.closed_trades, trades_net_pnl) if net <= 0]
 
         self.stats.winning_trades = len(wins)
         self.stats.losing_trades = len(losses)
+
+        # total_pnl = GROSS P&L (sum of all gross pnls before fees)
         self.stats.total_pnl = sum(t.pnl for t in self.closed_trades)
-        # Net P&L should be actual capital change, not sum of trades
+        # Net P&L = actual capital change = gross - all fees
         self.stats.net_pnl = self.current_capital - self.initial_capital
 
         if self.stats.total_trades > 0:
@@ -1008,9 +1018,15 @@ class VWAPBacktestEngine:
                 'winning_trades': self.stats.winning_trades,
                 'losing_trades': self.stats.losing_trades,
                 'win_rate': float(self.stats.win_rate),
-                'total_pnl': float(self.stats.total_pnl),
+                'gross_pnl': float(self.stats.total_pnl),  # Renamed for clarity
+                'total_pnl': float(self.stats.total_pnl),  # Keep for backward compatibility
                 'total_fees': float(self.stats.total_fees),
                 'net_pnl': float(self.stats.net_pnl),
+                'pnl_breakdown': {
+                    'gross_pnl': float(self.stats.total_pnl),
+                    'minus_fees': float(self.stats.total_fees),
+                    'equals_net_pnl': float(self.stats.net_pnl)
+                },
                 'return_pct': ((self.current_capital - self.initial_capital) / self.initial_capital) * 100,
                 'avg_win': float(self.stats.avg_win),
                 'avg_loss': float(self.stats.avg_loss),
@@ -1073,9 +1089,12 @@ class VWAPBacktestEngine:
                 'Quantity',
                 'Stop_Loss',
                 'Take_Profit',
+                'Gross_PNL_$',
                 'PNL_$',
                 'PNL_%',
-                'Fees_$',
+                'Total_Fees_$',
+                'Entry_Fee_$',
+                'Exit_Fee_$',
                 'Net_PNL_$',
                 'Duration_Minutes',
                 'Highest_Price',
@@ -1100,8 +1119,10 @@ class VWAPBacktestEngine:
                 exit_utc = datetime.fromtimestamp(trade.exit_time / 1000, tz=timezone.utc) if trade.exit_time else None
                 exit_ist = (exit_utc + ist_offset) if exit_utc else None
 
-                # Calculate fees (entry + exit)
-                fees = (trade.entry_price * trade.quantity * self.maker_fee * 2) # Entry + Exit
+                # Use actual fees from trade (already calculated)
+                total_fees = trade.total_fees if trade.total_fees else 0.0
+                gross_pnl = trade.pnl if trade.pnl else 0.0
+                net_pnl = gross_pnl - total_fees
 
                 # Get signal information
                 signal_reason = trade.signal.reason if trade.signal else "N/A"
@@ -1129,10 +1150,13 @@ class VWAPBacktestEngine:
                     'Quantity': f"{trade.quantity:.4f}",
                     'Stop_Loss': f"{trade.stop_loss:.2f}",
                     'Take_Profit': f"{trade.take_profit:.2f}",
-                    'PNL_$': f"{trade.pnl:.2f}" if trade.pnl else "0.00",
+                    'Gross_PNL_$': f"{gross_pnl:.2f}",  # Renamed for clarity
+                    'PNL_$': f"{gross_pnl:.2f}",  # Keep for backward compatibility
                     'PNL_%': f"{trade.pnl_pct:.2f}" if trade.pnl_pct else "0.00",
-                    'Fees_$': f"{fees:.2f}",
-                    'Net_PNL_$': f"{(trade.pnl - fees):.2f}" if trade.pnl else f"{-fees:.2f}",
+                    'Total_Fees_$': f"{total_fees:.2f}",
+                    'Entry_Fee_$': f"{trade.entry_fee:.2f}" if trade.entry_fee else "0.00",
+                    'Exit_Fee_$': f"{trade.exit_fee:.2f}" if trade.exit_fee else "0.00",
+                    'Net_PNL_$': f"{net_pnl:.2f}",
                     'Duration_Minutes': f"{((trade.exit_time - trade.entry_time) / 1000 / 60):.1f}" if trade.exit_time else "N/A",
                     'Highest_Price': f"{trade.highest_price:.2f}",
                     'Lowest_Price': f"{trade.lowest_price:.2f}",

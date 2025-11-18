@@ -67,34 +67,30 @@ class VWAPMLBacktest:
         # Initialize ML optimizer
         self.ml_optimizer = VWAPMLOptimizer(min_win_probability=min_win_probability)
 
+        # Prepare strategy parameters (with relaxed params if provided)
+        strategy_params = {}
+        if self.relaxed_params:
+            strategy_params.update(self.relaxed_params)
+
         # Initialize backtest engine with config dict
         config = {
             'symbol': symbol,
             'timeframe': timeframe,
             'initial_capital': initial_capital,
             'leverage': leverage,
-            'risk_per_trade': risk_per_trade
+            'risk_per_trade': risk_per_trade,
+            'strategy_params': strategy_params
         }
         self.engine = VWAPBacktestEngine(config)
-
-        # Apply relaxed parameters if provided
-        if self.relaxed_params:
-            self._apply_relaxed_parameters()
 
         # Storage for walk-forward results
         self.walk_forward_results = []
         self.all_signals = []  # For ML training
         self.all_outcomes = []  # For ML training
 
-    def _apply_relaxed_parameters(self):
-        """Apply relaxed parameters for higher timeframes"""
-        logger.info(f"[ML-BACKTEST] Applying relaxed parameters: {self.relaxed_params}")
-
-        # Update VWAP strategy parameters through engine
-        for key, value in self.relaxed_params.items():
-            if hasattr(self.engine, key):
-                setattr(self.engine, key, value)
-                logger.info(f"  Set {key} = {value}")
+        # Log applied parameters
+        if strategy_params:
+            logger.info(f"[ML-BACKTEST] Strategy parameters: {strategy_params}")
 
     async def _fetch_all_data_once(self, start_date: datetime, end_date: datetime) -> pd.DataFrame:
         """
@@ -663,7 +659,7 @@ class VWAPMLBacktest:
 async def main():
     parser = argparse.ArgumentParser(description='VWAP ML Backtest with Walk-Forward Analysis')
     parser.add_argument('--symbol', type=str, default='BTCUSDT', help='Trading symbol')
-    parser.add_argument('--timeframe', type=str, default='1m', help='Timeframe (1m, 5m, 15m)')
+    parser.add_argument('--timeframe', type=str, default='1m', choices=['1m', '5m', '15m'], help='Timeframe (1m, 5m, 15m)')
     parser.add_argument('--days', type=int, default=30, help='Number of days to backtest (from now backwards)')
     parser.add_argument('--start', type=str, default=None, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end', type=str, default=None, help='End date (YYYY-MM-DD)')
@@ -672,6 +668,8 @@ async def main():
     parser.add_argument('--min-win-prob', type=float, default=0.60, help='Minimum win probability (default: 0.60)')
     parser.add_argument('--walk-window', type=int, default=7, help='Walk-forward training window (days)')
     parser.add_argument('--retrain-interval', type=int, default=3, help='Retrain interval (days)')
+    parser.add_argument('--stop-loss', type=float, default=None, help='Stop loss in points (default: auto based on timeframe)')
+    parser.add_argument('--take-profit', type=float, default=None, help='Take profit in points (default: auto based on timeframe)')
 
     args = parser.parse_args()
 
@@ -683,21 +681,42 @@ async def main():
         start_date = datetime.strptime(args.start, '%Y-%m-%d').replace(tzinfo=timezone.utc)
         end_date = datetime.strptime(args.end, '%Y-%m-%d').replace(tzinfo=timezone.utc)
 
+    # Set default SL/TP based on timeframe (user can override with CLI args)
+    timeframe_defaults = {
+        '1m': {'stop_points': 150, 'target_points': 200},
+        '5m': {'stop_points': 200, 'target_points': 400},
+        '15m': {'stop_points': 300, 'target_points': 600},
+    }
+
+    # Get defaults for selected timeframe
+    defaults = timeframe_defaults.get(args.timeframe, timeframe_defaults['1m'])
+
+    # Override with CLI args if provided
+    stop_loss = args.stop_loss if args.stop_loss is not None else defaults['stop_points']
+    take_profit = args.take_profit if args.take_profit is not None else defaults['target_points']
+
+    logger.info(f"\n[CONFIG] Timeframe: {args.timeframe}")
+    logger.info(f"[CONFIG] Stop Loss: {stop_loss} points")
+    logger.info(f"[CONFIG] Take Profit: {take_profit} points\n")
+
     # Relaxed parameters for different timeframes
-    relaxed_params = {}
+    relaxed_params = {
+        'stop_points': stop_loss,
+        'target_points': take_profit,
+    }
 
     if args.timeframe == '5m':
-        relaxed_params = {
+        relaxed_params.update({
             'min_zone_strength': 60,  # Lower from 70
             'band_proximity_dollars': 400,  # Increase from 300
             'zone_proximity_dollars': 600,  # Increase from 500
-        }
+        })
     elif args.timeframe == '15m':
-        relaxed_params = {
+        relaxed_params.update({
             'min_zone_strength': 50,  # Lower from 70
             'band_proximity_dollars': 500,  # Increase from 300
             'zone_proximity_dollars': 700,  # Increase from 500
-        }
+        })
 
     # Create and run backtest
     backtest = VWAPMLBacktest(

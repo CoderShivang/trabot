@@ -67,26 +67,36 @@ class InteractiveDashboard:
                 daily_data[date_str] = {
                     'date': date,
                     'date_str': date_str,
-                    'pnl': 0,
+                    'gross_pnl': 0,
+                    'net_pnl': 0,
                     'trades': 0,
                     'wins': 0,
                     'losses': 0,
                     'total_fees': 0
                 }
 
-            daily_data[date_str]['pnl'] += trade['pnl']
-            daily_data[date_str]['trades'] += 1
-
             # Get fees for this trade
             if 'total_fees' in trade and trade['total_fees'] is not None:
-                daily_data[date_str]['total_fees'] += trade['total_fees']
+                fees = trade['total_fees']
             elif 'quantity' in trade:
                 # Calculate fees for old backtests
                 entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
                 exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
-                daily_data[date_str]['total_fees'] += entry_fee + exit_fee
+                fees = entry_fee + exit_fee
+            else:
+                fees = 0
 
-            if trade['pnl'] > 0:
+            # trade['pnl'] is GROSS PnL after the backtest engine fix
+            gross_pnl = trade['pnl']
+            net_pnl = gross_pnl - fees
+
+            daily_data[date_str]['gross_pnl'] += gross_pnl
+            daily_data[date_str]['net_pnl'] += net_pnl
+            daily_data[date_str]['total_fees'] += fees
+            daily_data[date_str]['trades'] += 1
+
+            # Use NET PnL to determine wins/losses (what actually matters)
+            if net_pnl > 0:
                 daily_data[date_str]['wins'] += 1
             else:
                 daily_data[date_str]['losses'] += 1
@@ -107,7 +117,9 @@ class InteractiveDashboard:
             formatted_data.append({
                 'date_str': day['date'].strftime('%Y-%m-%d'),
                 'date_obj': day['date_str'],  # For filtering - now uses consistent string
-                'pnl': day['pnl'],  # Numeric for sorting
+                'gross_pnl': day['gross_pnl'],  # Numeric for sorting
+                'net_pnl': day['net_pnl'],  # Numeric for sorting (what actually matters)
+                'pnl': day['net_pnl'],  # Use net for backward compatibility with conditional formatting
                 'total_fees': day['total_fees'],  # Numeric for sorting
                 'trades': day['trades'],
                 'wins': day['wins'],
@@ -131,26 +143,36 @@ class InteractiveDashboard:
                 monthly_data[year_month] = {
                     'year_month': year_month,
                     'month_name': dt.strftime('%B %Y'),  # e.g., "January 2024"
-                    'pnl': 0,
+                    'gross_pnl': 0,
+                    'net_pnl': 0,
                     'trades': 0,
                     'wins': 0,
                     'losses': 0,
                     'total_fees': 0
                 }
 
-            monthly_data[year_month]['pnl'] += trade['pnl']
-            monthly_data[year_month]['trades'] += 1
-
             # Get fees for this trade
             if 'total_fees' in trade and trade['total_fees'] is not None:
-                monthly_data[year_month]['total_fees'] += trade['total_fees']
+                fees = trade['total_fees']
             elif 'quantity' in trade:
                 # Calculate fees for old backtests
                 entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
                 exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
-                monthly_data[year_month]['total_fees'] += entry_fee + exit_fee
+                fees = entry_fee + exit_fee
+            else:
+                fees = 0
 
-            if trade['pnl'] > 0:
+            # trade['pnl'] is GROSS PnL after the backtest engine fix
+            gross_pnl = trade['pnl']
+            net_pnl = gross_pnl - fees
+
+            monthly_data[year_month]['gross_pnl'] += gross_pnl
+            monthly_data[year_month]['net_pnl'] += net_pnl
+            monthly_data[year_month]['total_fees'] += fees
+            monthly_data[year_month]['trades'] += 1
+
+            # Use NET PnL to determine wins/losses
+            if net_pnl > 0:
                 monthly_data[year_month]['wins'] += 1
             else:
                 monthly_data[year_month]['losses'] += 1
@@ -421,18 +443,18 @@ class InteractiveDashboard:
         monthly_data = sorted(monthly_data, key=lambda x: x['year_month'])
 
         months = [m['month_name'] for m in monthly_data]
-        pnls = [m['pnl'] for m in monthly_data]
-        colors = ['#27ae60' if pnl > 0 else '#e74c3c' for pnl in pnls]
+        net_pnls = [m['net_pnl'] for m in monthly_data]
+        colors = ['#27ae60' if pnl > 0 else '#e74c3c' for pnl in net_pnls]
 
         fig = go.Figure()
 
         fig.add_trace(go.Bar(
             x=months,
-            y=pnls,
+            y=net_pnls,
             marker_color=colors,
-            text=[f'${pnl:,.2f}' for pnl in pnls],
+            text=[f'${pnl:,.2f}' for pnl in net_pnls],
             textposition='outside',
-            hovertemplate='<b>%{x}</b><br>P&L: $%{y:,.2f}<extra></extra>'
+            hovertemplate='<b>%{x}</b><br>Net P&L: $%{y:,.2f}<extra></extra>'
         ))
 
         # Add zero reference line
@@ -759,9 +781,11 @@ class InteractiveDashboard:
                     id='daily-pnl-table',
                     columns=[
                         {'name': 'Date', 'id': 'date_str'},
-                        {'name': 'Total P&L', 'id': 'pnl', 'type': 'numeric',
+                        {'name': 'Gross P&L', 'id': 'gross_pnl', 'type': 'numeric',
                          'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
                         {'name': 'Total Fees', 'id': 'total_fees', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Net P&L', 'id': 'net_pnl', 'type': 'numeric',
                          'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
                         {'name': 'Trades', 'id': 'trades', 'type': 'numeric'},
                         {'name': 'Wins', 'id': 'wins', 'type': 'numeric'},
@@ -887,8 +911,9 @@ class InteractiveDashboard:
                         {'name': 'Entry Time', 'id': 'entry_time_str'},
                         {'name': 'Entry Price', 'id': 'entry_price_str'},
                         {'name': 'Exit Price', 'id': 'exit_price_str'},
+                        {'name': 'Gross P&L', 'id': 'gross_pnl_str'},
                         {'name': 'Fees', 'id': 'fees_str'},
-                        {'name': 'P&L (Net)', 'id': 'pnl_str'},
+                        {'name': 'Net P&L', 'id': 'pnl_str'},
                         {'name': 'P&L %', 'id': 'pnl_pct_str'},
                         {'name': 'Reason', 'id': 'reason_short'},
                     ],
@@ -963,16 +988,20 @@ class InteractiveDashboard:
             for i, trade in enumerate(filtered, 1):
                 # Get fees (handle old backtests that don't have fees field)
                 if 'total_fees' in trade and trade['total_fees'] is not None:
-                    fees_str = f"${trade['total_fees']:.2f}"
+                    fees = trade['total_fees']
                 else:
                     # Calculate fees for old backtests
                     maker_fee = self.config.get('maker_fee', 0.0002)
                     if 'quantity' in trade:
                         entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
                         exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
-                        fees_str = f"${entry_fee + exit_fee:.2f}"
+                        fees = entry_fee + exit_fee
                     else:
-                        fees_str = "N/A"
+                        fees = 0
+
+                # Calculate net PnL
+                gross_pnl = trade['pnl']
+                net_pnl = gross_pnl - fees
 
                 table_data.append({
                     'trade_num': i,
@@ -981,11 +1010,12 @@ class InteractiveDashboard:
                     'entry_time_str': pd.to_datetime(trade['entry_time'], unit='ms').strftime('%Y-%m-%d %H:%M'),
                     'entry_price_str': f"${trade['entry_price']:,.2f}",
                     'exit_price_str': f"${trade['exit_price']:,.2f}",
-                    'fees_str': fees_str,
-                    'pnl_str': f"${trade['pnl']:,.2f}",
+                    'fees_str': f"${fees:.2f}",
+                    'gross_pnl_str': f"${gross_pnl:.2f}",
+                    'pnl_str': f"${net_pnl:.2f}",  # Show NET PnL in main column
                     'pnl_pct_str': f"{trade['pnl_pct']:+.2f}%",
                     'reason_short': trade['signal']['reason'][:60] + '...' if len(trade['signal']['reason']) > 60 else trade['signal']['reason'],
-                    'pnl': trade['pnl'],  # Hidden field for conditional formatting
+                    'pnl': net_pnl,  # Use NET PnL for conditional formatting
                     'trade_index': self.trades.index(trade)  # Store original index
                 })
 
@@ -1046,6 +1076,7 @@ class InteractiveDashboard:
     def _filter_trades(self, outcome: str, direction: str, signal_type: str, selected_date: str = None) -> List[Dict]:
         """Filter trades based on criteria"""
         filtered = self.trades.copy()
+        maker_fee = self.config.get('maker_fee', 0.0002)
 
         # Filter by date if one is selected
         if selected_date:
@@ -1053,8 +1084,22 @@ class InteractiveDashboard:
             filtered = [t for t in filtered
                        if str(pd.to_datetime(t['entry_time'], unit='ms', utc=True).date()) == selected_date]
 
+        # Filter by outcome using NET PnL (gross - fees)
         if outcome != 'all':
-            filtered = [t for t in filtered if (t['pnl'] > 0) == (outcome == 'win')]
+            def is_win(trade):
+                # Get fees for this trade
+                if 'total_fees' in trade and trade['total_fees'] is not None:
+                    fees = trade['total_fees']
+                elif 'quantity' in trade:
+                    entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                    exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                    fees = entry_fee + exit_fee
+                else:
+                    fees = 0
+                net_pnl = trade['pnl'] - fees
+                return net_pnl > 0
+
+            filtered = [t for t in filtered if is_win(t) == (outcome == 'win')]
 
         if direction != 'all':
             filtered = [t for t in filtered if t['direction'] == direction]
