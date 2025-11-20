@@ -1,0 +1,1358 @@
+"""
+Interactive VWAP Backtest Dashboard with Filtering
+
+Creates interactive web app with:
+- Trade filtering (WIN/LOSS, LONG/SHORT, date range, etc.)
+- Clickable trade list
+- Individual trade charts showing only relevant context
+- VWAP bands and S/R zones specific to each trade
+"""
+
+import dash
+from dash import dcc, html, Input, Output, State, dash_table
+from dash.dash_table.Format import Format, Scheme
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+import pandas as pd
+import json
+from pathlib import Path
+from typing import List, Dict, Any
+from datetime import datetime, timedelta, timezone
+import webbrowser
+from threading import Timer
+
+
+class InteractiveDashboard:
+    """Interactive HTML dashboard for filtering and inspecting trades"""
+
+    def __init__(self, results_path: str, ohlcv_data: pd.DataFrame):
+        """
+        Args:
+            results_path: Path to backtest JSON results
+            ohlcv_data: DataFrame with OHLCV data (timestamp, open, high, low, close, volume)
+        """
+        self.results_path = Path(results_path)
+        self.df = ohlcv_data.copy()
+
+        # Ensure timestamp is datetime
+        if not pd.api.types.is_datetime64_any_dtype(self.df['timestamp']):
+            self.df['timestamp'] = pd.to_datetime(self.df['timestamp'])
+
+        # Load backtest results
+        with open(results_path, 'r') as f:
+            self.results = json.load(f)
+
+        self.trades = self.results['trades']
+        self.performance = self.results['performance']
+        self.config = self.results['backtest_config']
+
+        # Initialize Dash app
+        self.app = dash.Dash(__name__)
+        self.app.layout = self._create_layout()
+        self._setup_callbacks()
+
+    def _aggregate_daily_pnl(self):
+        """Aggregate trades by date and calculate daily P&L"""
+        daily_data = {}
+        maker_fee = self.config.get('maker_fee', 0.0002)
+
+        for trade in self.trades:
+            # Extract date from entry timestamp (timezone-aware)
+            # Convert to datetime, normalize to UTC, then get date as string for consistency
+            dt = pd.to_datetime(trade['entry_time'], unit='ms', utc=True)
+            date = dt.date()
+            date_str = str(date)  # Store as string for consistent comparison
+
+            if date_str not in daily_data:
+                daily_data[date_str] = {
+                    'date': date,
+                    'date_str': date_str,
+                    'gross_pnl': 0,
+                    'net_pnl': 0,
+                    'trades': 0,
+                    'wins': 0,
+                    'losses': 0,
+                    'total_fees': 0
+                }
+
+            # Get fees for this trade
+            if 'total_fees' in trade and trade['total_fees'] is not None:
+                fees = trade['total_fees']
+            elif 'quantity' in trade:
+                # Calculate fees for old backtests
+                entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                fees = entry_fee + exit_fee
+            else:
+                fees = 0
+
+            # trade['pnl'] is GROSS PnL after the backtest engine fix
+            gross_pnl = trade.get('pnl', 0) if trade.get('pnl') is not None else 0
+            net_pnl = gross_pnl - fees
+
+            daily_data[date_str]['gross_pnl'] += gross_pnl
+            daily_data[date_str]['net_pnl'] += net_pnl
+            daily_data[date_str]['total_fees'] += fees
+            daily_data[date_str]['trades'] += 1
+
+            # Use NET PnL to determine wins/losses (what actually matters)
+            if net_pnl > 0:
+                daily_data[date_str]['wins'] += 1
+            else:
+                daily_data[date_str]['losses'] += 1
+
+        # Convert to sorted list (by date)
+        daily_list = sorted(daily_data.values(), key=lambda x: x['date'], reverse=True)
+
+        return daily_list
+
+    def _format_daily_pnl_table(self):
+        """Format daily P&L data for display in DataTable"""
+        daily_data = self._aggregate_daily_pnl()
+
+        formatted_data = []
+        for day in daily_data:
+            win_rate = (day['wins'] / day['trades'] * 100) if day['trades'] > 0 else 0
+
+            formatted_data.append({
+                'date_str': day['date'].strftime('%Y-%m-%d'),
+                'date_obj': day['date_str'],  # For filtering - now uses consistent string
+                'gross_pnl': day['gross_pnl'],  # Numeric for sorting
+                'net_pnl': day['net_pnl'],  # Numeric for sorting (what actually matters)
+                'pnl': day['net_pnl'],  # Use net for backward compatibility with conditional formatting
+                'total_fees': day['total_fees'],  # Numeric for sorting
+                'trades': day['trades'],
+                'wins': day['wins'],
+                'losses': day['losses'],
+                'win_rate': win_rate
+            })
+
+        return formatted_data
+
+    def _aggregate_monthly_pnl(self):
+        """Aggregate trades by month and calculate monthly P&L"""
+        monthly_data = {}
+        maker_fee = self.config.get('maker_fee', 0.0002)
+
+        for trade in self.trades:
+            # Extract year-month from entry timestamp (timezone-aware)
+            dt = pd.to_datetime(trade['entry_time'], unit='ms', utc=True)
+            year_month = f"{dt.year}-{dt.month:02d}"  # Format: YYYY-MM
+
+            if year_month not in monthly_data:
+                monthly_data[year_month] = {
+                    'year_month': year_month,
+                    'month_name': dt.strftime('%B %Y'),  # e.g., "January 2024"
+                    'gross_pnl': 0,
+                    'net_pnl': 0,
+                    'trades': 0,
+                    'wins': 0,
+                    'losses': 0,
+                    'total_fees': 0
+                }
+
+            # Get fees for this trade
+            if 'total_fees' in trade and trade['total_fees'] is not None:
+                fees = trade['total_fees']
+            elif 'quantity' in trade:
+                # Calculate fees for old backtests
+                entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                fees = entry_fee + exit_fee
+            else:
+                fees = 0
+
+            # trade['pnl'] is GROSS PnL after the backtest engine fix
+            gross_pnl = trade.get('pnl', 0) if trade.get('pnl') is not None else 0
+            net_pnl = gross_pnl - fees
+
+            monthly_data[year_month]['gross_pnl'] += gross_pnl
+            monthly_data[year_month]['net_pnl'] += net_pnl
+            monthly_data[year_month]['total_fees'] += fees
+            monthly_data[year_month]['trades'] += 1
+
+            # Use NET PnL to determine wins/losses
+            if net_pnl > 0:
+                monthly_data[year_month]['wins'] += 1
+            else:
+                monthly_data[year_month]['losses'] += 1
+
+        # Convert to sorted list (by year-month)
+        monthly_list = sorted(monthly_data.values(), key=lambda x: x['year_month'], reverse=True)
+
+        return monthly_list
+
+    def _create_ml_stats_section(self):
+        """Create ML filtering statistics section if ML was used"""
+        # Check if ML stats are present in performance
+        total_signals = self.performance.get('total_signals_generated', 0)
+        rejected_signals = self.performance.get('signals_rejected_by_ml', 0)
+        approved_signals = self.performance.get('signals_approved_by_ml', 0)
+        ml_filter_rate = self.performance.get('ml_filter_rate', 0)
+
+        # If no ML stats, return empty div
+        if total_signals == 0 and rejected_signals == 0 and approved_signals == 0:
+            return html.Div()
+
+        # Create ML stats display
+        ml_stats_content = [
+            html.H3("ML Filtering Statistics", style={'color': '#34495e'}),
+            html.P("Machine Learning signal filtering performance and walk-forward window breakdown",
+                   style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+            # Overall ML stats
+            html.Div([
+                html.Div([
+                    html.H4(f"{total_signals:,}", style={'margin': '5px', 'color': '#2980b9'}),
+                    html.P("Total Signals", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#e3f2fd', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{rejected_signals:,}", style={'margin': '5px', 'color': '#e74c3c'}),
+                    html.P("ML Rejected", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#ffebee', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{approved_signals:,}", style={'margin': '5px', 'color': '#27ae60'}),
+                    html.P("Net Signals (ML Approved)", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#e8f5e9', 'borderRadius': '8px', 'minWidth': '150px'}),
+
+                html.Div([
+                    html.H4(f"{ml_filter_rate:.1f}%", style={'margin': '5px', 'color': '#f39c12'}),
+                    html.P("ML Filter Rate", style={'margin': '5px', 'fontSize': '14px'}),
+                ], style={'display': 'inline-block', 'textAlign': 'center', 'margin': '20px',
+                         'padding': '15px', 'backgroundColor': '#fff3e0', 'borderRadius': '8px', 'minWidth': '150px'}),
+            ], style={'textAlign': 'center'}),
+        ]
+
+        # Check if this is a walk-forward backtest with window breakdown
+        walk_forward_windows = self.results.get('walk_forward_windows', [])
+        if walk_forward_windows:
+            ml_stats_content.append(html.Hr(style={'margin': '20px 0'}))
+            ml_stats_content.append(html.H4("Walk-Forward Window Breakdown",
+                                           style={'color': '#34495e', 'marginTop': '20px'}))
+
+            # Create table data for windows
+            window_table_data = []
+            for i, window in enumerate(walk_forward_windows, 1):
+                perf = window.get('performance', {})
+                config = window.get('config', {})
+
+                # Extract dates
+                start_date = config.get('start_date', 'N/A')
+                end_date = config.get('end_date', 'N/A')
+                if start_date != 'N/A':
+                    start_date = pd.to_datetime(start_date).strftime('%Y-%m-%d')
+                if end_date != 'N/A':
+                    end_date = pd.to_datetime(end_date).strftime('%Y-%m-%d')
+
+                date_range = f"{start_date} to {end_date}"
+
+                # Get window stats
+                window_total = perf.get('total_signals_generated', 0)
+                window_rejected = perf.get('signals_rejected_by_ml', 0)
+                window_approved = perf.get('signals_approved_by_ml', 0)
+                window_filter_rate = perf.get('ml_filter_rate', 0)
+                window_trades = perf.get('total_trades', 0)
+                window_pnl = perf.get('net_pnl', 0)
+                window_win_rate = perf.get('win_rate', 0)
+
+                window_table_data.append({
+                    'window': f"#{i}",
+                    'date_range': date_range,
+                    'total_signals': window_total,
+                    'rejected': window_rejected,
+                    'approved': window_approved,
+                    'filter_rate': f"{window_filter_rate:.1f}%",
+                    'trades': window_trades,
+                    'pnl': window_pnl,
+                    'win_rate': f"{window_win_rate:.1f}%",
+                })
+
+            # Create window table
+            ml_stats_content.append(
+                dash_table.DataTable(
+                    columns=[
+                        {'name': 'Window', 'id': 'window'},
+                        {'name': 'Date Range', 'id': 'date_range'},
+                        {'name': 'Total Signals', 'id': 'total_signals', 'type': 'numeric'},
+                        {'name': 'ML Rejected', 'id': 'rejected', 'type': 'numeric'},
+                        {'name': 'Net Signals', 'id': 'approved', 'type': 'numeric'},
+                        {'name': 'Filter Rate', 'id': 'filter_rate'},
+                        {'name': 'Trades', 'id': 'trades', 'type': 'numeric'},
+                        {'name': 'P&L', 'id': 'pnl', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Win Rate', 'id': 'win_rate'},
+                    ],
+                    data=window_table_data,
+                    style_data_conditional=[
+                        {
+                            'if': {'filter_query': '{pnl} > 0', 'column_id': 'pnl'},
+                            'color': '#27ae60',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'filter_query': '{pnl} < 0', 'column_id': 'pnl'},
+                            'color': '#e74c3c',
+                            'fontWeight': 'bold'
+                        },
+                    ],
+                    style_header={
+                        'backgroundColor': '#34495e',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_cell={
+                        'textAlign': 'center',
+                        'padding': '10px',
+                        'fontSize': '13px'
+                    },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': 'date_range'},
+                            'textAlign': 'left',
+                            'minWidth': '180px'
+                        }
+                    ],
+                )
+            )
+
+        return html.Div(ml_stats_content,
+                       style={'backgroundColor': '#ecf0f1', 'padding': '15px',
+                              'borderRadius': '5px', 'margin': '20px 0'})
+
+    def _create_trades_by_day_chart(self):
+        """Create bar chart showing win/loss breakdown by day of week"""
+        trades_by_day = self.performance.get('trades_by_day', {})
+
+        # Order days properly
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = []
+        wins = []
+        losses = []
+
+        for day in day_order:
+            if day in trades_by_day:
+                days.append(day[:3])  # Abbreviate to Mon, Tue, etc.
+                wins.append(trades_by_day[day]['wins'])
+                losses.append(trades_by_day[day]['losses'])
+
+        fig = go.Figure()
+
+        # Add wins bar
+        fig.add_trace(go.Bar(
+            x=days,
+            y=wins,
+            name='Wins',
+            marker_color='#27ae60',
+            text=wins,
+            textposition='auto'
+        ))
+
+        # Add losses bar
+        fig.add_trace(go.Bar(
+            x=days,
+            y=losses,
+            name='Losses',
+            marker_color='#e74c3c',
+            text=losses,
+            textposition='auto'
+        ))
+
+        fig.update_layout(
+            title='Trades by Day of Week',
+            xaxis_title='Day',
+            yaxis_title='Number of Trades',
+            barmode='stack',
+            template='plotly_white',
+            showlegend=True,
+            margin=dict(l=50, r=50, t=50, b=50)
+        )
+
+        return fig
+
+    def _create_winrate_by_day_chart(self):
+        """Create bar chart showing win rate by day of week"""
+        trades_by_day = self.performance.get('trades_by_day', {})
+
+        # Order days properly
+        day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+        days = []
+        win_rates = []
+        colors = []
+
+        for day in day_order:
+            if day in trades_by_day:
+                day_data = trades_by_day[day]
+                total_trades = day_data['wins'] + day_data['losses']
+
+                if total_trades > 0:
+                    win_rate = (day_data['wins'] / total_trades) * 100
+                    days.append(day[:3])  # Abbreviate
+                    win_rates.append(win_rate)
+                    # Color based on win rate
+                    colors.append('#27ae60' if win_rate >= 50 else '#e74c3c')
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=days,
+            y=win_rates,
+            marker_color=colors,
+            text=[f'{wr:.1f}%' for wr in win_rates],
+            textposition='auto'
+        ))
+
+        # Add 50% reference line
+        fig.add_hline(y=50, line_dash="dash", line_color="gray",
+                      annotation_text="50% Break-even",
+                      annotation_position="right")
+
+        fig.update_layout(
+            title='Win Rate by Day of Week',
+            xaxis_title='Day',
+            yaxis_title='Win Rate (%)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+            yaxis=dict(range=[0, 100])
+        )
+
+        return fig
+
+    def _create_monthly_pnl_chart(self):
+        """Create bar chart showing monthly P&L comparison"""
+        monthly_data = self._aggregate_monthly_pnl()
+
+        if not monthly_data:
+            # Return empty chart if no data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No monthly data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Sort by year-month for chronological order
+        monthly_data = sorted(monthly_data, key=lambda x: x['year_month'])
+
+        months = [m['month_name'] for m in monthly_data]
+        net_pnls = [m['net_pnl'] for m in monthly_data]
+        colors = ['#27ae60' if pnl > 0 else '#e74c3c' for pnl in net_pnls]
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=months,
+            y=net_pnls,
+            marker_color=colors,
+            text=[f'${pnl:,.2f}' for pnl in net_pnls],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Net P&L: $%{y:,.2f}<extra></extra>'
+        ))
+
+        # Add zero reference line
+        fig.add_hline(y=0, line_color="gray", line_width=1)
+
+        fig.update_layout(
+            title='Monthly P&L Comparison',
+            xaxis_title='Month',
+            yaxis_title='P&L ($)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=50),
+            xaxis=dict(tickangle=-45)
+        )
+
+        return fig
+
+    def _create_monthly_winrate_chart(self):
+        """Create bar chart showing monthly win rate comparison"""
+        monthly_data = self._aggregate_monthly_pnl()
+
+        if not monthly_data:
+            # Return empty chart if no data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No monthly data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Sort by year-month for chronological order
+        monthly_data = sorted(monthly_data, key=lambda x: x['year_month'])
+
+        months = [m['month_name'] for m in monthly_data]
+        win_rates = []
+        colors = []
+        trade_counts = []
+
+        for m in monthly_data:
+            total_trades = m['wins'] + m['losses']
+            if total_trades > 0:
+                win_rate = (m['wins'] / total_trades) * 100
+                win_rates.append(win_rate)
+                colors.append('#27ae60' if win_rate >= 50 else '#e74c3c')
+                trade_counts.append(total_trades)
+            else:
+                win_rates.append(0)
+                colors.append('#95a5a6')
+                trade_counts.append(0)
+
+        fig = go.Figure()
+
+        fig.add_trace(go.Bar(
+            x=months,
+            y=win_rates,
+            marker_color=colors,
+            text=[f'{wr:.1f}%<br>({tc} trades)' for wr, tc in zip(win_rates, trade_counts)],
+            textposition='outside',
+            hovertemplate='<b>%{x}</b><br>Win Rate: %{y:.1f}%<extra></extra>'
+        ))
+
+        # Add 50% reference line
+        fig.add_hline(y=50, line_dash="dash", line_color="gray",
+                      annotation_text="50% Break-even",
+                      annotation_position="right")
+
+        fig.update_layout(
+            title='Monthly Win Rate Comparison',
+            xaxis_title='Month',
+            yaxis_title='Win Rate (%)',
+            template='plotly_white',
+            showlegend=False,
+            margin=dict(l=50, r=50, t=50, b=100),
+            yaxis=dict(range=[0, max(win_rates + [100]) * 1.1]),
+            xaxis=dict(tickangle=-45)
+        )
+
+        return fig
+
+    def _create_equity_curve_chart(self):
+        """Create equity curve and drawdown chart"""
+        equity_curve = self.results.get('equity_curve', [])
+
+        if not equity_curve:
+            # Return empty chart if no equity data
+            fig = go.Figure()
+            fig.add_annotation(
+                text="No equity curve data available",
+                xref="paper", yref="paper",
+                x=0.5, y=0.5, showarrow=False,
+                font=dict(size=16, color="gray")
+            )
+            return fig
+
+        # Convert timestamps to datetime
+        timestamps = [datetime.fromtimestamp(point['timestamp'] / 1000, tz=timezone.utc)
+                      for point in equity_curve]
+        equity = [point['equity'] for point in equity_curve]
+        drawdown = [point['drawdown'] for point in equity_curve]
+
+        # Find key points
+        max_equity = max(equity)
+        max_equity_idx = equity.index(max_equity)
+        max_drawdown = max(drawdown)
+        max_dd_idx = drawdown.index(max_drawdown)
+
+        # Create figure with secondary y-axis
+        fig = make_subplots(
+            rows=2, cols=1,
+            row_heights=[0.7, 0.3],
+            subplot_titles=('Equity Curve', 'Drawdown'),
+            vertical_spacing=0.1,
+            shared_xaxes=True
+        )
+
+        # Add equity curve
+        fig.add_trace(
+            go.Scatter(
+                x=timestamps,
+                y=equity,
+                mode='lines',
+                name='Equity',
+                line=dict(color='#3498db', width=2),
+                fill='tonexty',
+                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Equity:</b> $%{y:.2f}<br>' +
+                              '<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Add initial capital line
+        initial_capital = self.config.get('initial_capital', 100)
+        fig.add_hline(
+            y=initial_capital,
+            line_dash="dash",
+            line_color="gray",
+            annotation_text=f"Initial: ${initial_capital}",
+            annotation_position="right",
+            row=1, col=1
+        )
+
+        # Mark max profit point
+        fig.add_trace(
+            go.Scatter(
+                x=[timestamps[max_equity_idx]],
+                y=[max_equity],
+                mode='markers+text',
+                name='Max Profit',
+                marker=dict(size=12, color='#27ae60', symbol='star'),
+                text=[f'Max: ${max_equity:.2f}'],
+                textposition='top center',
+                hovertemplate='<b>Max Profit</b><br>' +
+                              '<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Equity:</b> $%{y:.2f}<br>' +
+                              '<extra></extra>'
+            ),
+            row=1, col=1
+        )
+
+        # Add drawdown chart
+        fig.add_trace(
+            go.Scatter(
+                x=timestamps,
+                y=[-dd for dd in drawdown],  # Negative for visual effect
+                mode='lines',
+                name='Drawdown',
+                line=dict(color='#e74c3c', width=2),
+                fill='tozeroy',
+                fillcolor='rgba(231, 76, 60, 0.3)',
+                hovertemplate='<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Drawdown:</b> %{y:.2f}%<br>' +
+                              '<extra></extra>'
+            ),
+            row=2, col=1
+        )
+
+        # Mark max drawdown point
+        fig.add_trace(
+            go.Scatter(
+                x=[timestamps[max_dd_idx]],
+                y=[-max_drawdown],
+                mode='markers+text',
+                name='Max Drawdown',
+                marker=dict(size=12, color='#c0392b', symbol='diamond'),
+                text=[f'Max DD: {max_drawdown:.2f}%'],
+                textposition='bottom center',
+                hovertemplate='<b>Max Drawdown</b><br>' +
+                              '<b>Date:</b> %{x|%Y-%m-%d %H:%M}<br>' +
+                              '<b>Drawdown:</b> %{y:.2f}%<br>' +
+                              '<extra></extra>'
+            ),
+            row=2, col=1
+        )
+
+        # Update layout
+        fig.update_xaxes(title_text="Date", row=2, col=1)
+        fig.update_yaxes(title_text="Equity ($)", row=1, col=1)
+        fig.update_yaxes(title_text="Drawdown (%)", row=2, col=1)
+
+        fig.update_layout(
+            height=700,
+            template='plotly_white',
+            showlegend=True,
+            hovermode='x unified',
+            margin=dict(l=50, r=50, t=80, b=50)
+        )
+
+        return fig
+
+    def _create_layout(self):
+        """Create dashboard layout with filters and charts"""
+        return html.Div([
+            html.H1(f"VWAP Backtest Dashboard - {self.config['symbol']}",
+                    style={'textAlign': 'center', 'color': '#2c3e50'}),
+
+            # Performance summary
+            html.Div([
+                html.Div([
+                    html.H3(f"Win Rate: {self.performance['win_rate']:.1f}%",
+                           style={'color': '#27ae60' if self.performance['win_rate'] > 50 else '#e74c3c'}),
+                ], style={'display': 'inline-block', 'margin': '20px'}),
+                html.Div([
+                    html.H3(f"Total Trades: {self.performance['total_trades']}",
+                           style={'color': '#2980b9'}),
+                ], style={'display': 'inline-block', 'margin': '20px'}),
+                html.Div([
+                    html.H3(f"Net P&L: ${self.performance['net_pnl']:.2f} ({self.performance['return_pct']:.2f}%)",
+                           style={'color': '#27ae60' if self.performance['net_pnl'] > 0 else '#e74c3c'}),
+                ], style={'display': 'inline-block', 'margin': '20px'}),
+            ], style={'textAlign': 'center', 'backgroundColor': '#ecf0f1', 'padding': '10px', 'borderRadius': '5px'}),
+
+            html.Hr(),
+
+            # ML Filtering Stats Section (if ML was used)
+            self._create_ml_stats_section(),
+
+            html.Hr(),
+
+            # Day of Week Analysis Section
+            html.Div([
+                html.H3("Day of Week Analysis", style={'color': '#34495e'}),
+                html.P("Performance breakdown by day of the week",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+                # Two column layout for charts
+                html.Div([
+                    # Left: Trades per day
+                    html.Div([
+                        dcc.Graph(
+                            id='trades-by-day-chart',
+                            figure=self._create_trades_by_day_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+
+                    # Right: Win rate per day
+                    html.Div([
+                        dcc.Graph(
+                            id='winrate-by-day-chart',
+                            figure=self._create_winrate_by_day_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
+                ], style={'width': '100%'}),
+
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Monthly Performance Comparison Section
+            html.Div([
+                html.H3("Monthly Performance Comparison", style={'color': '#34495e'}),
+                html.P("Month-by-month P&L and win rate analysis",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+
+                # Two column layout for charts
+                html.Div([
+                    # Left: Monthly P&L
+                    html.Div([
+                        dcc.Graph(
+                            id='monthly-pnl-chart',
+                            figure=self._create_monthly_pnl_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top'}),
+
+                    # Right: Monthly win rate
+                    html.Div([
+                        dcc.Graph(
+                            id='monthly-winrate-chart',
+                            figure=self._create_monthly_winrate_chart(),
+                            style={'height': '400px'}
+                        )
+                    ], style={'width': '48%', 'display': 'inline-block', 'verticalAlign': 'top', 'marginLeft': '4%'}),
+                ], style={'width': '100%'}),
+
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Equity Curve and Drawdown Section
+            html.Div([
+                html.H3("Equity Curve & Drawdown", style={'color': '#34495e'}),
+                html.P("Track account balance progression and maximum drawdown over time",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+                dcc.Graph(
+                    id='equity-curve-chart',
+                    figure=self._create_equity_curve_chart(),
+                    style={'height': '700px'}
+                )
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Daily P&L Analysis Section
+            html.Div([
+                html.H3("Daily P&L Analysis", style={'color': '#34495e'}),
+                html.P("Click column headers to sort. Click a row to filter trades to that day.",
+                       style={'color': '#7f8c8d', 'fontSize': '14px'}),
+                dash_table.DataTable(
+                    id='daily-pnl-table',
+                    columns=[
+                        {'name': 'Date', 'id': 'date_str'},
+                        {'name': 'Gross P&L', 'id': 'gross_pnl', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Total Fees', 'id': 'total_fees', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Net P&L', 'id': 'net_pnl', 'type': 'numeric',
+                         'format': Format(precision=2, scheme=Scheme.fixed).symbol_prefix('$')},
+                        {'name': 'Trades', 'id': 'trades', 'type': 'numeric'},
+                        {'name': 'Wins', 'id': 'wins', 'type': 'numeric'},
+                        {'name': 'Losses', 'id': 'losses', 'type': 'numeric'},
+                        {'name': 'Win Rate', 'id': 'win_rate', 'type': 'numeric',
+                         'format': Format(precision=1, scheme=Scheme.fixed).symbol_suffix('%')},
+                    ],
+                    data=self._format_daily_pnl_table(),
+                    style_data_conditional=[
+                        {
+                            'if': {'filter_query': '{pnl} > 0'},
+                            'backgroundColor': '#d4edda',
+                            'color': '#155724',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'filter_query': '{pnl} < 0'},
+                            'backgroundColor': '#f8d7da',
+                            'color': '#721c24',
+                            'fontWeight': 'bold'
+                        },
+                        {
+                            'if': {'state': 'selected'},
+                            'backgroundColor': '#3498db',
+                            'color': 'white',
+                            'fontWeight': 'bold'
+                        }
+                    ],
+                    style_header={
+                        'backgroundColor': '#2c3e50',
+                        'color': 'white',
+                        'fontWeight': 'bold',
+                        'textAlign': 'center'
+                    },
+                    style_cell={
+                        'textAlign': 'center',
+                        'padding': '10px',
+                        'fontSize': '14px'
+                    },
+                    style_cell_conditional=[
+                        {
+                            'if': {'column_id': 'date_str'},
+                            'textAlign': 'left',
+                            'fontWeight': 'bold'
+                        }
+                    ],
+                    sort_action='native',  # Enable built-in sorting
+                    sort_mode='single',
+                    row_selectable='single',  # Allow selecting rows
+                    selected_rows=[],
+                    page_size=15
+                )
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            html.Hr(),
+
+            # Selected date info
+            html.Div(id='selected-date-info', style={'margin': '10px 0', 'fontWeight': 'bold', 'color': '#2c3e50'}),
+
+            html.Hr(),
+
+            # Filters
+            html.Div([
+                html.H3("Filter Trades", style={'color': '#34495e'}),
+                html.Div([
+                    # Outcome filter
+                    html.Div([
+                        html.Label("Outcome:", style={'fontWeight': 'bold'}),
+                        dcc.Dropdown(
+                            id='outcome-filter',
+                            options=[
+                                {'label': 'All Trades', 'value': 'all'},
+                                {'label': 'Wins Only', 'value': 'win'},
+                                {'label': 'Losses Only', 'value': 'loss'}
+                            ],
+                            value='all',
+                            style={'width': '200px'}
+                        )
+                    ], style={'display': 'inline-block', 'margin': '10px'}),
+
+                    # Direction filter
+                    html.Div([
+                        html.Label("Direction:", style={'fontWeight': 'bold'}),
+                        dcc.Dropdown(
+                            id='direction-filter',
+                            options=[
+                                {'label': 'All Directions', 'value': 'all'},
+                                {'label': 'LONG Only', 'value': 'LONG'},
+                                {'label': 'SHORT Only', 'value': 'SHORT'}
+                            ],
+                            value='all',
+                            style={'width': '200px'}
+                        )
+                    ], style={'display': 'inline-block', 'margin': '10px'}),
+
+                    # Signal type filter
+                    html.Div([
+                        html.Label("Signal Type:", style={'fontWeight': 'bold'}),
+                        dcc.Dropdown(
+                            id='signal-filter',
+                            options=[
+                                {'label': 'All Types', 'value': 'all'},
+                                {'label': 'Mean Reversion', 'value': 'mean_reversion'},
+                                {'label': 'Trend Continuation', 'value': 'trend_continuation'}
+                            ],
+                            value='all',
+                            style={'width': '200px'}
+                        )
+                    ], style={'display': 'inline-block', 'margin': '10px'}),
+                ]),
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px', 'margin': '20px 0'}),
+
+            # Trade list
+            html.Div([
+                html.H3("Trade List (Click to View Chart)", style={'color': '#34495e'}),
+                html.Div(id='trade-count', style={'marginBottom': '10px', 'fontWeight': 'bold'}),
+                dash_table.DataTable(
+                    id='trade-table',
+                    columns=[
+                        {'name': '#', 'id': 'trade_num'},
+                        {'name': 'Direction', 'id': 'direction'},
+                        {'name': 'Type', 'id': 'signal_type'},
+                        {'name': 'Entry Time', 'id': 'entry_time_str'},
+                        {'name': 'Entry Price', 'id': 'entry_price_str'},
+                        {'name': 'Exit Price', 'id': 'exit_price_str'},
+                        {'name': 'Gross P&L', 'id': 'gross_pnl_str'},
+                        {'name': 'Fees', 'id': 'fees_str'},
+                        {'name': 'Net P&L', 'id': 'pnl_str'},
+                        {'name': 'P&L %', 'id': 'pnl_pct_str'},
+                        {'name': 'Reason', 'id': 'reason_short'},
+                    ],
+                    style_data_conditional=[
+                        {
+                            'if': {'filter_query': '{pnl} > 0'},
+                            'backgroundColor': '#d4edda',
+                            'color': '#155724'
+                        },
+                        {
+                            'if': {'filter_query': '{pnl} <= 0'},
+                            'backgroundColor': '#f8d7da',
+                            'color': '#721c24'
+                        }
+                    ],
+                    style_header={
+                        'backgroundColor': '#2c3e50',
+                        'color': 'white',
+                        'fontWeight': 'bold'
+                    },
+                    style_cell={
+                        'textAlign': 'left',
+                        'padding': '10px'
+                    },
+                    row_selectable='single',
+                    selected_rows=[],
+                    page_size=10
+                )
+            ], style={'margin': '20px 0'}),
+
+            # Selected trade info
+            html.Div(id='selected-trade-info', style={'margin': '20px 0'}),
+
+            # Chart for selected trade
+            html.Div([
+                html.H3("Trade Chart", style={'color': '#34495e'}),
+                dcc.Graph(id='trade-chart', style={'height': '800px'})
+            ])
+        ], style={'padding': '20px', 'fontFamily': 'Arial, sans-serif'})
+
+    def _setup_callbacks(self):
+        """Setup Dash callbacks for interactivity"""
+
+        @self.app.callback(
+            [Output('trade-table', 'data'),
+             Output('trade-count', 'children'),
+             Output('selected-date-info', 'children')],
+            [Input('outcome-filter', 'value'),
+             Input('direction-filter', 'value'),
+             Input('signal-filter', 'value'),
+             Input('daily-pnl-table', 'selected_rows'),
+             Input('daily-pnl-table', 'data')]
+        )
+        def update_trade_table(outcome, direction, signal_type, selected_rows, daily_data):
+            """Filter trade list based on selections and selected date"""
+            # Check if a date is selected
+            selected_date = None
+            date_info = ""
+            if selected_rows and len(selected_rows) > 0 and daily_data:
+                selected_row = daily_data[selected_rows[0]]
+                selected_date = selected_row['date_obj']
+                date_info = html.Div([
+                    html.Span("📅 Filtering trades for: ", style={'color': '#2c3e50'}),
+                    html.Span(selected_row['date_str'], style={'color': '#3498db', 'fontWeight': 'bold', 'fontSize': '16px'}),
+                    html.Span(f" ({selected_row['trades']} trades)", style={'color': '#7f8c8d'})
+                ])
+
+            filtered = self._filter_trades(outcome, direction, signal_type, selected_date)
+
+            # Format trades for table
+            table_data = []
+            for i, trade in enumerate(filtered, 1):
+                # Get fees (handle old backtests that don't have fees field)
+                if 'total_fees' in trade and trade['total_fees'] is not None:
+                    fees = trade['total_fees']
+                else:
+                    # Calculate fees for old backtests
+                    maker_fee = self.config.get('maker_fee', 0.0002)
+                    if 'quantity' in trade:
+                        entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                        exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                        fees = entry_fee + exit_fee
+                    else:
+                        fees = 0
+
+                # Calculate net PnL
+                gross_pnl = trade['pnl']
+                net_pnl = gross_pnl - fees
+
+                table_data.append({
+                    'trade_num': i,
+                    'direction': trade['direction'],
+                    'signal_type': trade['signal']['signal_type'],
+                    'entry_time_str': pd.to_datetime(trade['entry_time'], unit='ms').strftime('%Y-%m-%d %H:%M'),
+                    'entry_price_str': f"${trade['entry_price']:,.2f}",
+                    'exit_price_str': f"${trade['exit_price']:,.2f}",
+                    'fees_str': f"${fees:.2f}",
+                    'gross_pnl_str': f"${gross_pnl:.2f}",
+                    'pnl_str': f"${net_pnl:.2f}",  # Show NET PnL in main column
+                    'pnl_pct_str': f"{trade['pnl_pct']:+.2f}%",
+                    'reason_short': trade['signal']['reason'][:60] + '...' if len(trade['signal']['reason']) > 60 else trade['signal']['reason'],
+                    'pnl': net_pnl,  # Use NET PnL for conditional formatting
+                    'trade_index': self.trades.index(trade)  # Store original index
+                })
+
+            count_text = f"Showing {len(filtered)} trades"
+            return table_data, count_text, date_info
+
+        @self.app.callback(
+            [Output('trade-chart', 'figure'),
+             Output('selected-trade-info', 'children')],
+            [Input('trade-table', 'selected_rows'),
+             Input('trade-table', 'data')]
+        )
+        def update_trade_chart(selected_rows, table_data):
+            """Update chart when trade is selected"""
+            if not selected_rows or not table_data:
+                # Show empty chart with message
+                fig = go.Figure()
+                fig.add_annotation(
+                    text="Select a trade from the table to view its chart",
+                    xref="paper", yref="paper",
+                    x=0.5, y=0.5, showarrow=False,
+                    font=dict(size=20, color="#7f8c8d")
+                )
+                fig.update_layout(
+                    template='plotly_white',
+                    height=800
+                )
+                return fig, ""
+
+            # Get selected trade
+            selected_idx = selected_rows[0]
+            row_data = table_data[selected_idx]
+            trade_idx = row_data['trade_index']
+            trade = self.trades[trade_idx]
+
+            # Create chart for this specific trade
+            fig = self._create_single_trade_chart(trade)
+
+            # Create trade info panel
+            entry_time = pd.to_datetime(trade['entry_time'], unit='ms')
+            exit_time = pd.to_datetime(trade['exit_time'], unit='ms')
+            duration = exit_time - entry_time
+
+            info_panel = html.Div([
+                html.H4(f"Trade #{selected_idx + 1} Details", style={'color': '#2c3e50'}),
+                html.P([
+                    html.Strong("Direction: "), f"{trade['direction']} ({trade['signal']['signal_type']})", html.Br(),
+                    html.Strong("Entry: "), f"${trade['entry_price']:,.2f} at {entry_time.strftime('%Y-%m-%d %H:%M')}", html.Br(),
+                    html.Strong("Exit: "), f"${trade['exit_price']:,.2f} at {exit_time.strftime('%Y-%m-%d %H:%M')} ({trade['exit_reason']})", html.Br(),
+                    html.Strong("Duration: "), f"{duration}", html.Br(),
+                    html.Strong("P&L: "), f"${trade['pnl']:,.2f} ({trade['pnl_pct']:+.2f}%)", html.Br(),
+                    html.Strong("Reason: "), trade['signal']['reason'], html.Br(),
+                ], style={'fontSize': '14px'})
+            ], style={'backgroundColor': '#ecf0f1', 'padding': '15px', 'borderRadius': '5px'})
+
+            return fig, info_panel
+
+    def _filter_trades(self, outcome: str, direction: str, signal_type: str, selected_date: str = None) -> List[Dict]:
+        """Filter trades based on criteria"""
+        filtered = self.trades.copy()
+        maker_fee = self.config.get('maker_fee', 0.0002)
+
+        # Filter by date if one is selected
+        if selected_date:
+            # Use UTC timezone for consistency with _aggregate_daily_pnl
+            filtered = [t for t in filtered
+                       if str(pd.to_datetime(t['entry_time'], unit='ms', utc=True).date()) == selected_date]
+
+        # Filter by outcome using NET PnL (gross - fees)
+        if outcome != 'all':
+            def is_win(trade):
+                # Get fees for this trade
+                if 'total_fees' in trade and trade['total_fees'] is not None:
+                    fees = trade['total_fees']
+                elif 'quantity' in trade:
+                    entry_fee = trade['entry_price'] * trade['quantity'] * maker_fee
+                    exit_fee = trade['exit_price'] * trade['quantity'] * maker_fee
+                    fees = entry_fee + exit_fee
+                else:
+                    fees = 0
+                net_pnl = trade['pnl'] - fees
+                return net_pnl > 0
+
+            filtered = [t for t in filtered if is_win(t) == (outcome == 'win')]
+
+        if direction != 'all':
+            filtered = [t for t in filtered if t['direction'] == direction]
+
+        if signal_type != 'all':
+            filtered = [t for t in filtered if t['signal']['signal_type'] == signal_type]
+
+        return filtered
+
+    def _create_single_trade_chart(self, trade: Dict) -> go.Figure:
+        """
+        Create chart showing only context for this specific trade
+
+        Shows:
+        - Candlesticks for ±1 hour around trade
+        - VWAP bands at trade time
+        - Only S/R zones that contributed to this trade's decision
+        - Entry/exit markers for this trade only
+        """
+        entry_time = pd.to_datetime(trade['entry_time'], unit='ms')
+        exit_time = pd.to_datetime(trade['exit_time'], unit='ms')
+
+        # Get time window: 1 hour before entry to 1 hour after exit
+        start_time = entry_time - timedelta(hours=1)
+        end_time = exit_time + timedelta(hours=1)
+
+        # Filter data to window
+        mask = (self.df['timestamp'] >= start_time) & (self.df['timestamp'] <= end_time)
+        window_df = self.df[mask].copy()
+
+        if len(window_df) == 0:
+            # Fallback to wider window
+            mask = (self.df['timestamp'] >= entry_time - timedelta(hours=2)) & \
+                   (self.df['timestamp'] <= exit_time + timedelta(hours=2))
+            window_df = self.df[mask].copy()
+
+        # Create figure with subplots
+        fig = make_subplots(
+            rows=2, cols=1,
+            shared_xaxes=True,
+            vertical_spacing=0.03,
+            subplot_titles=(f'{trade["direction"]} Trade - {entry_time.strftime("%Y-%m-%d %H:%M")}', 'Volume'),
+            row_heights=[0.75, 0.25]
+        )
+
+        # Add candlestick chart
+        fig.add_trace(
+            go.Candlestick(
+                x=window_df['timestamp'],
+                open=window_df['open'],
+                high=window_df['high'],
+                low=window_df['low'],
+                close=window_df['close'],
+                name='Price',
+                increasing_line_color='#26a69a',
+                decreasing_line_color='#ef5350'
+            ),
+            row=1, col=1
+        )
+
+        # Add VWAP bands for this session
+        self._add_vwap_bands_to_chart(fig, window_df)
+
+        # Add S/R zone that contributed to this trade
+        if 'sr_zone' in trade['signal'] and trade['signal']['sr_zone']:
+            zone = trade['signal']['sr_zone']
+            color = 'rgba(76, 175, 80, 0.2)' if zone['zone_type'] in ['support', 'both'] else 'rgba(244, 67, 54, 0.2)'
+
+            fig.add_hrect(
+                y0=zone['lower'],
+                y1=zone['upper'],
+                fillcolor=color,
+                line=dict(color=color.replace('0.2', '0.8'), width=2, dash='dash'),
+                row=1, col=1
+            )
+
+            # Add zone label
+            fig.add_annotation(
+                x=window_df['timestamp'].iloc[len(window_df)//2],
+                y=zone['level'],
+                text=f"S/R {zone['timeframe']}<br>Strength: {zone['strength']}",
+                showarrow=False,
+                font=dict(size=10, color='white'),
+                bgcolor=color.replace('0.2', '0.7'),
+                bordercolor=color.replace('0.2', '1.0'),
+                borderwidth=2,
+                row=1, col=1
+            )
+
+        # Add entry marker
+        marker_color = '#26a69a' if trade['direction'] == 'LONG' else '#ef5350'
+        marker_symbol = 'triangle-up' if trade['direction'] == 'LONG' else 'triangle-down'
+
+        fig.add_trace(
+            go.Scatter(
+                x=[entry_time],
+                y=[trade['entry_price']],
+                mode='markers+text',
+                name='Entry',
+                marker=dict(
+                    symbol=marker_symbol,
+                    size=15,
+                    color=marker_color,
+                    line=dict(color='white', width=2)
+                ),
+                text=['ENTRY'],
+                textposition='top center',
+                textfont=dict(size=12, color=marker_color)
+            ),
+            row=1, col=1
+        )
+
+        # Add exit marker
+        exit_color = '#66bb6a' if trade['pnl'] > 0 else '#ff7043'
+
+        fig.add_trace(
+            go.Scatter(
+                x=[exit_time],
+                y=[trade['exit_price']],
+                mode='markers+text',
+                name='Exit',
+                marker=dict(
+                    symbol='x',
+                    size=15,
+                    color=exit_color,
+                    line=dict(width=3)
+                ),
+                text=[f"EXIT<br>{trade['exit_reason']}"],
+                textposition='top center',
+                textfont=dict(size=12, color=exit_color)
+            ),
+            row=1, col=1
+        )
+
+        # Add volume bars
+        colors = ['#26a69a' if close >= open_price else '#ef5350'
+                  for close, open_price in zip(window_df['close'], window_df['open'])]
+
+        fig.add_trace(
+            go.Bar(
+                x=window_df['timestamp'],
+                y=window_df['volume'],
+                name='Volume',
+                marker_color=colors,
+                showlegend=False
+            ),
+            row=2, col=1
+        )
+
+        # Update layout
+        pnl_color = '#27ae60' if trade['pnl'] > 0 else '#e74c3c'
+        fig.update_layout(
+            title=dict(
+                text=f"{trade['direction']} {trade['signal']['signal_type'].replace('_', ' ').title()}<br>" +
+                     f"<sub>P&L: ${trade['pnl']:,.2f} ({trade['pnl_pct']:+.2f}%) | " +
+                     f"Confidence: {trade['signal']['confidence']:.0f}</sub>",
+                x=0.5,
+                xanchor='center'
+            ),
+            xaxis_rangeslider_visible=False,
+            xaxis2_title='Time',
+            yaxis_title='Price (USDT)',
+            yaxis2_title='Volume',
+            hovermode='x unified',
+            height=800,
+            template='plotly_white',
+            showlegend=True
+        )
+
+        return fig
+
+    def _add_vwap_bands_to_chart(self, fig, df):
+        """Add VWAP bands to the chart"""
+        if len(df) == 0:
+            return
+
+        # Calculate session-based VWAP for the window
+        df_copy = df.copy()
+        df_copy['date'] = df_copy['timestamp'].dt.date
+
+        vwap_data = []
+        upper_1std_data = []
+        lower_1std_data = []
+
+        for date in df_copy['date'].unique():
+            session_df = df_copy[df_copy['date'] == date].copy()
+
+            # Calculate typical price
+            typical_price = (session_df['high'] + session_df['low'] + session_df['close']) / 3
+
+            # Calculate VWAP
+            cumulative_pv = (typical_price * session_df['volume']).cumsum()
+            cumulative_volume = session_df['volume'].cumsum()
+            running_vwap = cumulative_pv / cumulative_volume
+
+            # Calculate standard deviation
+            squared_diff = (typical_price - running_vwap) ** 2
+            cumulative_variance = (squared_diff * session_df['volume']).cumsum() / cumulative_volume
+            std = cumulative_variance.apply(lambda x: x ** 0.5)
+
+            vwap_data.extend(running_vwap.tolist())
+            upper_1std_data.extend((running_vwap + std).tolist())
+            lower_1std_data.extend((running_vwap - std).tolist())
+
+        # Add VWAP line
+        fig.add_trace(
+            go.Scatter(
+                x=df['timestamp'],
+                y=vwap_data,
+                name='VWAP',
+                line=dict(color='#ffa726', width=2),
+                mode='lines'
+            ),
+            row=1, col=1
+        )
+
+        # Add ±1σ bands
+        fig.add_trace(
+            go.Scatter(
+                x=df['timestamp'],
+                y=upper_1std_data,
+                name='+1σ',
+                line=dict(color='#42a5f5', width=1, dash='dash'),
+                mode='lines',
+                showlegend=True
+            ),
+            row=1, col=1
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=df['timestamp'],
+                y=lower_1std_data,
+                name='-1σ',
+                line=dict(color='#42a5f5', width=1, dash='dash'),
+                mode='lines',
+                fill='tonexty',
+                fillcolor='rgba(66, 165, 245, 0.1)',
+                showlegend=True
+            ),
+            row=1, col=1
+        )
+
+    def run(self, port: int = 8050, debug: bool = False, open_browser: bool = True):
+        """Run the dashboard server"""
+        def open_browser_delayed():
+            webbrowser.open(f'http://127.0.0.1:{port}/')
+
+        if open_browser:
+            Timer(1.5, open_browser_delayed).start()
+
+        print(f"\n[DASHBOARD] Starting interactive dashboard...")
+        print(f"[DASHBOARD] Open in browser: http://127.0.0.1:{port}/")
+        print(f"[DASHBOARD] Press Ctrl+C to stop the server\n")
+
+        self.app.run(debug=debug, port=port, host='127.0.0.1')
